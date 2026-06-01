@@ -54,3 +54,5 @@ __all__ = [
     'SegformerHeadOffsetLearning', 'LightHamHeadOffsetLearning', 
     'Mask2FormerHeadOffsetLearning'
 ]
+
+from .PARSeg3 import PARSeg3  # our fork: register PARSeg3 head
