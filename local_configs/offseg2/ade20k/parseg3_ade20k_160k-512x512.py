@@ -28,7 +28,14 @@ param_scheduler = [
          by_epoch=False),
 ]
 
-# 2x H100: batch_size 8/GPU * 2 = 16,保持与官方(8x2)相同的总 batch 和 LR
+# 我用 2 张卡:batch_size=8 → 总 batch 2×8=16,与师兄(推断 4×4=16)总量一致,lr 6e-5 不变。
+# 若之后确认他其实只用了 2 卡(总 batch=8),把这里改回 4 即可。
 train_dataloader = dict(batch_size=8)
 val_dataloader = dict(batch_size=1)
+
+# 对齐师兄:每 8000 iter 验证 + 存档;开 cudnn_benchmark 提速(输入尺寸固定)
+train_cfg = dict(val_interval=8000)
+default_hooks = dict(
+    checkpoint=dict(by_epoch=False, interval=8000, type='CheckpointHook'))
+env_cfg = dict(cudnn_benchmark=True)
 find_unused_parameters = True
