@@ -95,7 +95,10 @@ def main():
     mrh = head.prototype_attribute_refinement
     use_sigma = bool(getattr(mrh, 'use_sigma', False))
     fusion_mode = getattr(head, 'fusion_mode', 'gate')
-    inv_var_on = use_sigma and getattr(head, 'fusion_inv_var', None) is not None \
+    use_tv = bool(getattr(head, 'use_total_var', False))       # PARSeg4.1: between-var 三用
+    var_floor = float(getattr(head, 'var_floor', 0.0))
+    rv_extra = getattr(head, 'refine_var_extra', None)
+    inv_var_on = (use_sigma or use_tv) and getattr(head, 'fusion_inv_var', None) is not None \
         and fusion_mode == 'inv_var'
     tau = float(mrh.tau)
     mss = int(getattr(mrh, 'match_stride_scale', 1))
@@ -198,6 +201,7 @@ def main():
 
         refine_m = torch.empty(1, Nc, hm, wm, device=args.device)
         refvar_m = torch.empty(1, Nc, hm, wm, device=args.device) if use_sigma else None
+        btw_m = torch.empty(1, Nc, hm, wm, device=args.device) if use_tv else None
         win_cache = {}  # 本图: 类 -> 该类GT像素的获胜分量 [n]
 
         for c0 in range(0, Nc, args.chunk):
@@ -212,6 +216,11 @@ def main():
             resp = F.softmax(score, dim=-1)
             if use_sigma:
                 refvar_m[:, c0:c1] = (resp * var_c[:, c0:c1, None, None, :]).sum(-1)
+            if use_tv:
+                # 与 PARSeg41 头一致: between-var 基于不含 log π 的分量 logit s
+                s_nopi = score - log_pi[:, c0:c1, None, None, :]
+                m1_ = (resp * s_nopi).sum(-1)
+                btw_m[:, c0:c1] = ((resp * s_nopi * s_nopi).sum(-1) - m1_ * m1_).clamp_min(0)
 
             for c in present:
                 if not (c0 <= c < c1):
@@ -234,22 +243,32 @@ def main():
                     sig_n[c] += 1
                 win_cache[c] = win
 
+        # 不确定性 total_var: 4.1=between(+within); 4.0=within
+        if use_tv:
+            tvar_m = btw_m + (refvar_m if use_sigma else 0.0)
+        else:
+            tvar_m = refvar_m                                          # σ-off 的 4.0 时为 None
+
         # refine 回 stride4(同 head 行为)
         if mss > 1:
             refine4 = F.interpolate(refine_m, size=(h4, w4), mode='bilinear', align_corners=False)
-            refvar4 = F.interpolate(refvar_m, size=(h4, w4), mode='bilinear', align_corners=False) if use_sigma else None
+            tvar4 = F.interpolate(tvar_m, size=(h4, w4), mode='bilinear', align_corners=False) if tvar_m is not None else None
         else:
-            refine4, refvar4 = refine_m, refvar_m
+            refine4, tvar4 = refine_m, tvar_m
 
         # ---- fusion ----
         w_r = None
         if inv_var_on:
             bvar = head.base_logvar_head(feat_aligned).clamp(-8, 8).exp()
             fus = head.fusion_inv_var
+            rv = tvar4
+            if rv_extra is not None:                                   # 4.1: P8 安全垫 + floor
+                rv = rv + F.softplus(rv_extra)
+            rv = rv + var_floor
             bl = fus.scale_b * base + fus.shift_b
             rl = fus.scale_r * refine4 + fus.shift_r
             pb = 1.0 / (bvar * fus.scale_b ** 2 + 1e-6)
-            pr = 1.0 / (refvar4 * fus.scale_r ** 2 + 1e-6)
+            pr = 1.0 / (rv * fus.scale_r ** 2 + 1e-6)
             final = (pb * bl + pr * rl) / (pb + pr)
             w_r = pr / (pb + pr)                                       # [1,Nc,h4,w4]
             bvar_sum += float(bvar.mean())
@@ -300,14 +319,15 @@ def main():
             pi_effn_sum += float(torch.exp(ent[c]))
             pi_effn_n += 1
 
-        # AUROC 采样: refine_var 预测 final 错误
-        if use_sigma:
+        # AUROC 采样: uncertainty(total_var) 预测 final 错误
+        if tvar4 is not None:
             vmask = valid4.flatten()
-            sc = refvar4[0].gather(0, gtc.unsqueeze(0)).squeeze(0).flatten()[vmask]
+            sc = tvar4[0].gather(0, gtc.unsqueeze(0)).squeeze(0).flatten()[vmask]
             yy = (~fo).flatten()[vmask].float()
             n_s = min(args.sample_px, sc.numel())
             sel = torch.randperm(sc.numel(), device=sc.device)[:n_s]
             au_s.append(sc[sel].cpu().numpy()); au_y.append(yy[sel].cpu().numpy())
+        if use_sigma:
             sig_all.append(var_c.flatten().cpu().numpy())
 
         if (k + 1) % 50 == 0:
@@ -322,7 +342,8 @@ def main():
     L.append(f'CKPT={os.path.basename(args.checkpoint)} ITER={iter_meta}')
     aa = da.get('args', {})
     L.append(f'FLAGS tau={tau} A={A} heads={aa.get("mix_decoder_heads")} sigma={use_sigma} '
-             f'fusion={fusion_mode} mss={mss}')
+             f'fusion={fusion_mode} mss={mss} tv={use_tv} floor={var_floor} '
+             f'lb={aa.get("loadbal_w")} T0={aa.get("mix_temp_start")}')
     L.append(f'EVAL n_images={n_imgs}/{n_total} date={datetime.date.today()} mode=whole-image(非slide,仅诊断)')
 
     n = max(cells['n'], 1)
@@ -389,9 +410,9 @@ def main():
 
     L.append('[E_EXTRA]')
     L.append(f'分量间方差(P2预览, GT类, sim/τ尺度) mean={btw_sum/max(btw_n,1):.3f}')
-    if use_sigma and au_s:
-        L.append(f'refine_var预测final错误 AUROC={auroc(np.concatenate(au_s), np.concatenate(au_y)):.3f} '
-                 f'(0.5=无信息)')
+    if au_s:
+        L.append(f'uncertainty预测final错误 AUROC={auroc(np.concatenate(au_s), np.concatenate(au_y)):.3f} '
+                 f'(0.5=无信息; 4.1=between+within, 4.0=within)')
 
     report = '\n'.join(L)
     print('\n' + report)
