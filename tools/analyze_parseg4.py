@@ -143,10 +143,15 @@ def main():
         if isinstance(inputs, (list, tuple)):
             inputs = inputs[0].unsqueeze(0)
         inputs = inputs.to(args.device)
-        gt = data['data_samples'][0].gt_sem_seg.data.to(args.device)  # [1,H,W]
+        gt = data['data_samples'][0].gt_sem_seg.data.to(args.device)  # [1,Ho,Wo] 原图尺寸!
+        # mmseg test 管线只 resize 图像不 resize 标注(eval 时是把 pred 上采回原图比).
+        # 统计用: 把 GT nearest 对齐到 resize 后的输入网格, 等价且省显存.
+        H, W = inputs.shape[-2:]
+        if tuple(gt.shape[-2:]) != (H, W):
+            gt = F.interpolate(gt.unsqueeze(0).float(), size=(H, W),
+                               mode='nearest').squeeze(0).long()
 
         # pad 到 32 倍数(整图 forward 需要; gt 同步 pad ignore)
-        H, W = inputs.shape[-2:]
         ph, pw = (32 - H % 32) % 32, (32 - W % 32) % 32
         if ph or pw:
             inputs = F.pad(inputs, (0, pw, 0, ph), value=0.0)
