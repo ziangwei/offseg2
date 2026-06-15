@@ -10,4 +10,5 @@ model = dict(
         args=dict(
             loadbal_w=0.0,        # 关负载均衡(4.1 默认 0.01)
             mix_temp_start=1.0,   # 关混合温度退火(4.1 默认 3.0)
+            refinement_focusw=0.75,  # 对齐师兄定稿 baseline(parseg41 默认 1.0), apples-to-apples
         )))
