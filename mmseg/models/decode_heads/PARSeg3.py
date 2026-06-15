@@ -13,12 +13,12 @@ import numpy as np
 import cv2
 import math
 
-def cv_squared(x):
-    """The squared coefficient of variation of a sample."""
-    eps = 1e-10
-    if x.shape[0] == 1:
-        return torch.tensor([0], device=x.device, dtype=x.dtype)
-    return x.float().var() / (x.float().mean() ** 2 + eps)
+# def cv_squared(x):
+#     """The squared coefficient of variation of a sample."""
+#     eps = 1e-10
+#     if x.shape[0] == 1:
+#         return torch.tensor([0], device=x.device, dtype=x.dtype)
+#     return x.float().var() / (x.float().mean() ** 2 + eps)
 
 
 class AttentionGatedCorrectionFusion(nn.Module):
@@ -33,7 +33,7 @@ class AttentionGatedCorrectionFusion(nn.Module):
             nn.Conv2d(hidden, 1, kernel_size=1, bias=True)
         )
 
-        mid_channels = max(num_classes // 8, 16)
+        mid_channels = max(num_classes // 8, 4)
         self.channel_attn = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(num_classes * 2, mid_channels, kernel_size=1, bias=False),
@@ -97,7 +97,7 @@ class PrototypeGuidedAttributeCalibration(nn.Module):
 
         self.proto_proj = nn.Linear(dim, dim)
 
-        hidden = max(dim // 4, 32)
+        hidden = dim // 4
         self.gate_mlp = nn.Sequential(
             nn.Linear(dim * 3, hidden),
             nn.ReLU(inplace=True),
@@ -206,7 +206,7 @@ class PrototypeAttributeRefinementHead(nn.Module):
             mask_dim=mask_dim
         )
 
-        route_hidden = max(mask_dim // 4, 32)
+        route_hidden = mask_dim // 4
 
         self.route_mlp = nn.Sequential(
             nn.Linear(mask_dim, route_hidden),
@@ -232,7 +232,7 @@ class PrototypeAttributeRefinementHead(nn.Module):
             num_classes=num_classes,
             cls_attributes=cls_attributes,
             residual_scale=self.args['proto_residual_scale'],
-            topk_div=self.args['proto_topk_div'],   # tiny 建议先比 64 更稀疏一点
+            topk_div=self.args['proto_topk_div'],  
         )
 
     
@@ -255,7 +255,10 @@ class PrototypeAttributeRefinementHead(nn.Module):
 
         route_prob = F.softmax(route_value, dim=-1)     # soft routing
 
-        class_feats = torch.einsum('bcad,bca->bcd', calibrated_attr_tokens, route_prob) # [B, Nc, D]
+        if self.args['use_class_prototypes']:
+            class_feats = torch.einsum('bcad,bca->bcd', calibrated_attr_tokens, route_prob) # [B, Nc, D]
+        else:
+            class_feats = torch.einsum('bcad,bca->bcd', attr_tokens, route_prob) # [B, Nc, D]
         #class_feats = self.fc2(self.LeakyReLU(self.fc1(class_feats)))   # [B, Nc, D]        
 
         seg_feats = refinement_feats.permute(0, 2, 3, 1)            # [B, H, W, D]
@@ -331,6 +334,7 @@ class PARSeg3(BaseDecodeHead):
         )
 
         self.fusion = AttentionGatedCorrectionFusion(num_classes=num_classes)
+        self.fuse_catconv = nn.Conv2d(num_classes * 2, num_classes, kernel_size=1, bias=True)
 
     def forward(self, inputs, return_vis=False):
         """Forward function."""
@@ -354,8 +358,13 @@ class PARSeg3(BaseDecodeHead):
         base_head_logits = self.offset_learning(feat_aligned) # Logits (B, 150, H, W)
 
         refinement_head_logits, calibrated_attr_tokens = self.prototype_attribute_refinement(feat_aligned, base_head_logits)
-
-        final_logits = self.fusion(base_head_logits, refinement_head_logits)
+        fusion_mode = self.args.get('fusion_mode', 'AGC')
+        if fusion_mode == 'AGCF':
+            final_logits = self.fusion(base_head_logits, refinement_head_logits)
+        elif fusion_mode == 'avg':
+            final_logits = 0.5 * (base_head_logits + refinement_head_logits)
+        elif fusion_mode == 'catconv':
+            final_logits = self.fuse_catconv(torch.cat([base_head_logits, refinement_head_logits], dim=1))
 
         returndict = {}
         returndict['base_head_logits'] = base_head_logits
