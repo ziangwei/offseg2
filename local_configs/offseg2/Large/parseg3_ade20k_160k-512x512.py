@@ -73,7 +73,14 @@ param_scheduler = [
     )
 ]
 
-# By default, models are trained on 4 GPUs with 4 images per GPU
-train_dataloader = dict(batch_size=4)
+# 我用 2 张卡:batch_size=8 → 总 batch 2×8=16(对齐师兄 4×4=16,lr 6e-5 不变)
+# 注意:L 模型大,若 8 爆显存就降到 4(总 batch=8),或加卡保持总 batch 16
+train_dataloader = dict(batch_size=8)
 val_dataloader = dict(batch_size=1)
-find_unused_parameters=True
+
+# 对齐我的 parseg4 系:每 8000 iter 验证 + 存档;cudnn_benchmark 提速
+train_cfg = dict(val_interval=8000)
+default_hooks = dict(
+    checkpoint=dict(by_epoch=False, interval=8000, type='CheckpointHook'))
+env_cfg = dict(cudnn_benchmark=True)
+find_unused_parameters = True
