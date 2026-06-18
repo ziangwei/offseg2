@@ -63,8 +63,9 @@ param_scheduler = [
     )
 ]
 
-# 我用 2 张卡:batch_size=8 → 总 batch 2×8=16(与师兄 4×4=16 一致,lr 6e-5 不变)
-train_dataloader = dict(batch_size=8)
+# 对齐师兄 4 卡环境:4 张卡 × batch_size=4 = 总 batch 16(lr 6e-5 不变),per-GPU BN 看 4 个样本。
+# ⚠ 这是 4 卡配置。若回 2 卡跑,必须把 batch_size 改回 8(否则总 batch 只有 8、且会引入新变量)。
+train_dataloader = dict(batch_size=4)
 val_dataloader = dict(batch_size=1)
 
 # 对齐我的 parseg4 系:每 8000 iter 验证 + 存档;cudnn_benchmark 提速(输入尺寸固定)
