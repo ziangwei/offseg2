@@ -10,5 +10,8 @@ model = dict(
         args=dict(
             loadbal_w=0.0,        # 关负载均衡(4.1 默认 0.01)
             mix_temp_start=1.0,   # 关混合温度退火(4.1 默认 3.0)
-            refinement_focusw=0.75,  # 对齐师兄定稿 baseline(parseg41 默认 1.0), apples-to-apples
+            # 以师兄定稿配方为基座, 只换"头"这一个变量(最干净受控): focusw 固定 0.75。
+            # (备注: focusw=1.0 时 4.2a=48.41 更高, 但那是与未调参 base 的比, 不作主对照;
+            #  门槛 = base@0.75 ~48.84, 靠架构(4.3)去抬, 不靠调 focusw 粉饰。)
+            refinement_focusw=0.75,
         )))
