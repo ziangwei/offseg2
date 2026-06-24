@@ -78,7 +78,7 @@ mixed evidence = base_evidence + mix * context_evidence
 mixed evidence -> top-k pixels -> image-specific class prototype
 ```
 
-其中 `context_evidence` 来自 feature-only 的多膨胀上下文分支，不读取 base logits。使用加性证据而不是凸组合，是为了让 context 分支零初始化时严格退回 PARSeg3 的 PGAC 原型选择。这样保留 PGAC 的“图像条件化属性校准”能力，同时降低 base-only 高置信错分污染原型的风险。AGCF、hard-region focus、attribute decoupling 都保留。
+其中 `context_evidence` 来自 feature-only 的多膨胀上下文分支，不读取 base logits。使用加性证据而不是凸组合，是为了让 context 分支零初始化时严格退回 PARSeg3 的 PGAC 原型选择。`icar_context_mix` 默认设为 0.10，先做温和注入，避免早期训练把原型选择大幅推离 PARSeg3。这样保留 PGAC 的“图像条件化属性校准”能力，同时降低 base-only 高置信错分污染原型的风险。AGCF、hard-region focus、attribute decoupling 都保留。
 
 预期收益点：
 
@@ -86,7 +86,23 @@ mixed evidence -> top-k pixels -> image-specific class prototype
 - 仍然属于 prototype-attribute refinement，不是外接后处理。
 - 比 EAF 工作量更高，也更适合作为论文主模型候选。
 
+## 与第三槽位 CPM 的关系
+
+Claude 提到的 PARSeg5-CPM 更换的是信息源：用全训练集 GT 更新一个跨图类别原型库，推理时直接把像素特征和这个全局库匹配。这条线比 EAF/ICAR 更“独立”，因为它不依赖当前图 base logits 生成的错误原型。
+
+因此三个槽位可以这样区分：
+
+| 槽位 | 变量 | 信息源 |
+|---|---|---|
+| EAF | 改 fusion 端 | 同图上下文特征 |
+| ICAR | 改 PGAC 注入点 | 同图上下文特征 |
+| CPM | 改证据来源 | 跨图 GT 原型库 |
+
+EAF/ICAR 的共同风险是：context 分支仍然来自 `feat_aligned`，不是完全独立信息。如果 82% 同错像素来自 backbone/feature 本身的系统性偏差，它们可能只和 PARSeg3 打平。CPM 正好作为第三槽位验证这件事：如果 CPM 明显更好，说明“真正换信息源”才是关键；如果 ICAR/EAF 已经涨，说明同图上下文证据组织也有效。
+
 ## 训练命令
+
+推荐优先使用一键脚本。它会训练完成后自动测试，然后跑 `failure_analysis.txt` 和 `confusion_analysis.txt`，最后在同一个 `work_dir` 里生成 `run_conclusion.txt`。
 
 ### 1. 重跑 PARSeg3 base，4 卡 x batch 4，focusw=0.75
 
@@ -94,10 +110,10 @@ mixed evidence -> top-k pixels -> image-specific class prototype
 
 ```bash
 cd /path/to/offseg2
-bash tools/dist_train.sh \
+bash tools/train_test_analyze.sh \
   local_configs/offseg2/Base/parseg3_ade20k_160k-512x512.py \
-  4 \
-  --work-dir work_dirs/parseg3_ade20k_160k-512x512_4x4_try2
+  work_dirs/parseg3_ade20k_160k-512x512_4x4_try2 \
+  4
 ```
 
 测试：
@@ -114,10 +130,10 @@ bash tools/dist_test.sh \
 
 ```bash
 cd /path/to/offseg2
-bash tools/dist_train.sh \
+bash tools/train_test_analyze.sh \
   local_configs/offseg2/Base/parseg5eaf_ade20k_160k-512x512.py \
-  4 \
-  --work-dir work_dirs/parseg5eaf_ade20k_160k-512x512_4x4_try1
+  work_dirs/parseg5eaf_ade20k_160k-512x512_4x4_try1 \
+  4
 ```
 
 测试：
@@ -152,10 +168,10 @@ python tools/analyze_parseg3_confusions.py \
 
 ```bash
 cd /path/to/offseg2
-bash tools/dist_train.sh \
+bash tools/train_test_analyze.sh \
   local_configs/offseg2/Base/parseg5icar_ade20k_160k-512x512.py \
-  4 \
-  --work-dir work_dirs/parseg5icar_ade20k_160k-512x512_4x4_try1
+  work_dirs/parseg5icar_ade20k_160k-512x512_4x4_try1 \
+  4
 ```
 
 测试：

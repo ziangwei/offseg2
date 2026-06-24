@@ -46,8 +46,19 @@ class TestPARSeg5Scaffold(unittest.TestCase):
         self.assertIn("parseg3_ade20k_160k-512x512_4x4_try2", doc)
         self.assertIn("parseg5eaf_ade20k_160k-512x512", doc)
         self.assertIn("parseg5icar_ade20k_160k-512x512", doc)
-        self.assertIn("tools/dist_train.sh", doc)
+        self.assertIn("tools/train_test_analyze.sh", doc)
         self.assertIn("tools/dist_test.sh", doc)
+
+    def test_train_test_analyze_script_writes_workdir_reports(self):
+        path = REPO / "tools" / "train_test_analyze.sh"
+        self.assertTrue(path.exists(), "missing train-test-analysis helper script")
+        script = path.read_text(encoding="utf-8")
+
+        self.assertIn("tools/dist_train.sh", script)
+        self.assertIn("tools/dist_test.sh", script)
+        self.assertIn("tools/analyze_parseg3_failures.py", script)
+        self.assertIn("tools/analyze_parseg3_confusions.py", script)
+        self.assertIn("run_conclusion.txt", script)
 
 
 if __name__ == "__main__":

@@ -38,7 +38,7 @@ class IndependentPrototypeGuidedAttributeCalibration(nn.Module):
         cls_attributes,
         residual_scale=1.0,
         topk_div=64,
-        context_mix=0.35,
+        context_mix=0.10,
         context_dilations=(1, 6, 12),
         conv_cfg=None,
         norm_cfg=None,
@@ -114,7 +114,7 @@ class IndependentPrototypeGuidedAttributeCalibration(nn.Module):
         mix = torch.sigmoid(self.context_mix_logit)
         # Additive evidence preserves the PARSeg3 prototype selection when the
         # context branch is neutral at initialization.
-        mixed_mask = base_mask + mix * context_mask
+        mixed_mask = (base_mask + mix * context_mask).clamp(0.0, 1.0)
         class_proto, presence = self._prototype_from_mask(mixed_mask, refinement_feats)
 
         proto_base = self.proto_proj(class_proto)
@@ -185,7 +185,7 @@ class IndependentContextAttributeRefinementHead(nn.Module):
             cls_attributes=cls_attributes,
             residual_scale=self.args["proto_residual_scale"],
             topk_div=self.args["proto_topk_div"],
-            context_mix=self.args.get("icar_context_mix", 0.35),
+            context_mix=self.args.get("icar_context_mix", 0.10),
             context_dilations=tuple(self.args.get("icar_dilations", (1, 6, 12))),
             conv_cfg=conv_cfg,
             norm_cfg=norm_cfg,

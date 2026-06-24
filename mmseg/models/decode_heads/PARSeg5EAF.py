@@ -169,6 +169,12 @@ class PARSeg5EAF(PARSeg3):
             args=args,
             **kwargs,
         )
+        # EAF replaces PARSeg3's two-source fusion with a three-source fusion.
+        # Drop inherited unused modules so the optimizer/DDP does not carry dead
+        # parameters.
+        del self.fusion
+        del self.fuse_catconv
+
         a = args or {}
         dilations = tuple(a.get("eaf_dilations", (1, 6, 12)))
         self.context_evidence = IndependentContextEvidenceHead(
