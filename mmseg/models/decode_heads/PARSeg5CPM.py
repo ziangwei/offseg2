@@ -82,7 +82,12 @@ class CrossImagePrototypeMemory(nn.Module):
 
     def forward(self, feat):
         emb = self.embed(feat)                       # [B, D, h, w]
-        bank = self.proto_bank.detach()              # [Nc, D], no grad into bank
+        # IMPORTANT: clone, not just detach. update() later does an in-place
+        # copy_ into proto_bank; autograd saves `bank` for the einsum backward,
+        # so editing the shared storage in place would trigger the
+        # "a variable needed for gradient computation has been modified by an
+        # inplace operation" error. The clone gives the graph its own copy.
+        bank = self.proto_bank.detach().clone()      # [Nc, D], no grad into bank
         global_logits = torch.einsum("bdhw,cd->bchw", emb, bank) / self.tau
         return global_logits, emb
 
@@ -232,6 +237,12 @@ class PARSeg5CPM(PARSeg3):
             args=args,
             **kwargs,
         )
+        # Drop inherited unused modules — CPM fuses via evidence_fusion and never
+        # uses PARSeg3's AGCF / catconv — matching EAF, so DDP/optimizer carry no
+        # dead parameters.
+        del self.fusion
+        del self.fuse_catconv
+
         a = args or {}
         self.proto_memory = CrossImagePrototypeMemory(
             in_channels=self.channels,
