@@ -25,7 +25,60 @@ from mmseg.registry import MODELS
 from ..utils import resize
 from .MaskTransformer3 import SpatialAttributeDecoder
 from .PARSeg3 import AttentionGatedCorrectionFusion, PARSeg3
-from .PARSeg5EAF import IndependentContextEvidenceHead
+
+
+class _IndependentContextEvidenceHead(nn.Module):
+    """Small multi-dilation context branch local to ICAR.
+
+    This intentionally stays in this file instead of importing the EAF helper:
+    each PARSeg5 candidate should be removable independently.
+    """
+
+    def __init__(
+        self,
+        channels,
+        num_classes,
+        dilations=(1, 6, 12),
+        conv_cfg=None,
+        norm_cfg=None,
+        act_cfg=None,
+    ):
+        super().__init__()
+        self.branches = nn.ModuleList([
+            ConvModule(
+                channels,
+                channels,
+                3,
+                padding=d,
+                dilation=d,
+                groups=channels,
+                conv_cfg=conv_cfg,
+                norm_cfg=norm_cfg,
+                act_cfg=act_cfg,
+            )
+            for d in dilations
+        ])
+        self.fuse = ConvModule(
+            channels,
+            channels,
+            1,
+            conv_cfg=conv_cfg,
+            norm_cfg=norm_cfg,
+            act_cfg=act_cfg,
+        )
+        self.classifier = nn.Conv2d(channels, num_classes, kernel_size=1, bias=True)
+
+        # Starts as neutral evidence so ICAR initially falls back to PARSeg3's
+        # base-guided prototype selection.
+        nn.init.zeros_(self.classifier.weight)
+        nn.init.zeros_(self.classifier.bias)
+
+    def forward(self, feat_aligned):
+        context = self.branches[0](feat_aligned)
+        for branch in self.branches[1:]:
+            context = context + branch(feat_aligned)
+        context = self.fuse(context)
+        return self.classifier(context)
 
 
 class IndependentPrototypeGuidedAttributeCalibration(nn.Module):
@@ -51,7 +104,7 @@ class IndependentPrototypeGuidedAttributeCalibration(nn.Module):
         self.residual_scale = residual_scale
         self.topk_div = topk_div
 
-        self.context_evidence = IndependentContextEvidenceHead(
+        self.context_evidence = _IndependentContextEvidenceHead(
             channels=dim,
             num_classes=num_classes,
             dilations=context_dilations,

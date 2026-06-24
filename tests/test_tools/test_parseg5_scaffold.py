@@ -40,6 +40,13 @@ class TestPARSeg5Scaffold(unittest.TestCase):
         self.assertIn("mmseg.models.decode_heads.PARSeg5ICAR", icar_cfg)
         self.assertIn("type='PARSeg5ICAR'", icar_cfg)
 
+    def test_icar_is_not_coupled_to_eaf_module(self):
+        icar = (REPO / "mmseg/models/decode_heads/PARSeg5ICAR.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("PARSeg5EAF", icar)
+
     def test_design_doc_contains_train_and_test_commands(self):
         doc = (REPO / "PARSeg5_设计与运行.md").read_text(encoding="utf-8")
 
