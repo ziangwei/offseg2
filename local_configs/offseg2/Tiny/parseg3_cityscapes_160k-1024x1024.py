@@ -1,4 +1,4 @@
-_base_ = ['../../offseg/Base/offseg-b_cityscapes_160k-1024x1024.py']
+_base_ = ['../../offseg/Tiny/offseg-t_cityscapes_160k-1024x1024.py']
 
 model = dict(
     decode_head=dict(
