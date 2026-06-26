@@ -65,7 +65,14 @@ class TestPARSeg5Scaffold(unittest.TestCase):
         self.assertIn("tools/dist_test.sh", script)
         self.assertIn("tools/analyze_parseg3_failures.py", script)
         self.assertIn("tools/analyze_parseg3_confusions.py", script)
+        self.assertIn("checkpoint_from_best_val", script)
+        self.assertIn("BEST_VAL_MIOU", script)
+        self.assertIn(".analysis_tmp", script)
         self.assertIn("run_conclusion.txt", script)
+        self.assertNotIn("failure_stdout.txt", script)
+        self.assertNotIn("confusion_stdout.txt", script)
+        self.assertNotIn("failure_analysis: $FAILURE_TXT", script)
+        self.assertNotIn("confusion analysis: $CONFUSION_TXT", script)
 
 
 if __name__ == "__main__":
