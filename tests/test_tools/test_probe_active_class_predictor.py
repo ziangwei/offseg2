@@ -28,6 +28,20 @@ class TestProbeActiveClassPredictor(unittest.TestCase):
         active = mod.select_active_classes(scores, threshold=0.5, min_classes=3)
         self.assertEqual(active, [True, True, True, False])
 
+    def test_probe_dataloader_cfg_forces_single_image_batches(self):
+        mod = load_module()
+        original = {
+            "batch_size": 4,
+            "num_workers": 4,
+            "sampler": {"type": "InfiniteSampler", "shuffle": True},
+            "dataset": {"pipeline": [{"type": "RandomCrop", "crop_size": (512, 512)}]},
+        }
+        patched = mod.probe_dataloader_cfg(original)
+        self.assertEqual(patched["batch_size"], 1)
+        self.assertEqual(original["batch_size"], 4)
+        self.assertIsNot(patched, original)
+        self.assertIsNot(patched["dataset"], original["dataset"])
+
     def test_gating_candidate_can_recover_false_positive_pixels(self):
         mod = load_module()
         logits = [

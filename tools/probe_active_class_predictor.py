@@ -14,6 +14,7 @@ Example:
 """
 
 import argparse
+import copy
 import math
 from typing import Iterable, List, Sequence, Tuple
 
@@ -42,6 +43,13 @@ def parse_float_list(text: str) -> List[float]:
 
 def parse_int_list(text: str) -> List[int]:
     return [int(x) for x in str(text).split(",") if x.strip()]
+
+
+def probe_dataloader_cfg(loader_cfg):
+    """Return a dataloader config that feeds one image at a time to test_step."""
+    cfg = copy.deepcopy(loader_cfg)
+    cfg["batch_size"] = 1
+    return cfg
 
 
 def presence_from_label(label, num_classes: int, ignore_index: int = 255) -> List[float]:
@@ -166,8 +174,8 @@ def _fit_loader_from_cfg(cfg, split):
     from mmengine.runner import Runner
 
     if split == "train":
-        return Runner.build_dataloader(cfg.train_dataloader)
-    return Runner.build_dataloader(cfg.val_dataloader)
+        return Runner.build_dataloader(probe_dataloader_cfg(cfg.train_dataloader))
+    return Runner.build_dataloader(probe_dataloader_cfg(cfg.val_dataloader))
 
 
 def _resize_logits_to_gt(logits, gt):
