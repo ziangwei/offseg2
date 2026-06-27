@@ -68,4 +68,7 @@ param_scheduler = [
 # By default, models are trained on 8 GPUs with 1 images per GPU
 train_dataloader = dict(batch_size=1)
 val_dataloader = dict(batch_size=1)
+train_cfg = dict(val_interval=8000)
+default_hooks = dict(
+    checkpoint=dict(by_epoch=False, interval=8000, save_last=True, type='CheckpointHook'))
 find_unused_parameters=True
