@@ -7,6 +7,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 HEAD = ROOT / "mmseg" / "models" / "decode_heads" / "PARSegPALX.py"
 FULL_CFG = ROOT / "local_configs" / "offseg2" / "Base" / "parsegpalx_ade20k_160k-512x512.py"
 FT_CFG = ROOT / "local_configs" / "offseg2" / "Base" / "parsegpalx_ft_ade20k_160k-512x512.py"
+SHORT_FT_CFG = ROOT / "local_configs" / "offseg2" / "Base" / "parsegpalx_ft_short_ade20k_160k-512x512.py"
 
 
 class TestPARSegPALXScaffold(unittest.TestCase):
@@ -64,6 +65,18 @@ class TestPARSegPALXScaffold(unittest.TestCase):
         self.assertIn("load_from = 'work_dirs/parseg3_ade20k_160k-512x512_4x4_try1/iter_160000.pth'", ft)
         self.assertIn("max_iters = 40000", ft)
         self.assertIn("val_interval=8000", ft)
+
+    def test_short_ft_config_targets_early_palx_peak(self):
+        short = SHORT_FT_CFG.read_text(encoding="utf-8")
+        self.assertIn("_base_ = ['./parsegpalx_ft_ade20k_160k-512x512.py']", short)
+        self.assertIn("max_iters = 24000", short)
+        self.assertIn("val_interval=4000", short)
+        self.assertIn("interval=4000", short)
+        self.assertIn("palx_marginw=0.06", short)
+        self.assertIn("palx_centerw=0.04", short)
+        self.assertIn("palx_margin=0.08", short)
+        self.assertIn("_delete_=True", short)
+        self.assertNotIn("lr_mult=10", short)
 
 
 if __name__ == "__main__":
