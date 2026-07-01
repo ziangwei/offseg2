@@ -128,6 +128,11 @@ def parse_args():
     parser.add_argument("--eval-split", choices=["val", "train"], default="val")
     parser.add_argument("--fit-images", type=int, default=2000)
     parser.add_argument("--eval-images", type=int, default=2000)
+    parser.add_argument(
+        "--probe-size",
+        default=None,
+        help="fixed H,W or single integer for whole-image probe forward; default uses config crop_size",
+    )
     parser.add_argument("--groups-json", default=None, help="optional {group: [class,...]} JSON")
     parser.add_argument("--num-prototypes", type=int, default=3)
     parser.add_argument("--max-samples-per-class", type=int, default=8192)
@@ -153,12 +158,59 @@ def _set_innermost_pipeline(dataset_cfg, pipeline):
         node["pipeline"] = pipeline
 
 
-def _loader_from_cfg(cfg, split):
-    """One-image-at-a-time loader using eval transforms.
+def _parse_probe_size(text):
+    if text is None or text == "":
+        return None
+    parts = [int(x) for x in str(text).replace("x", ",").split(",") if x.strip()]
+    if len(parts) == 1:
+        return (parts[0], parts[0])
+    if len(parts) == 2:
+        return (parts[0], parts[1])
+    raise ValueError(f"invalid --probe-size: {text!r}")
 
-    Train split deliberately uses the validation/test pipeline. This preserves
-    train/val image separation while avoiding variable crop sizes and the batch
-    size assertion that hit earlier active-class probes.
+
+def _probe_size_from_cfg(cfg, requested):
+    parsed = _parse_probe_size(requested)
+    if parsed is not None:
+        return parsed
+    if "crop_size" in cfg:
+        return tuple(int(x) for x in cfg.crop_size)
+    data_preprocessor = cfg.get("model", {}).get("data_preprocessor", {})
+    if "size" in data_preprocessor:
+        return tuple(int(x) for x in data_preprocessor["size"])
+    return (512, 512)
+
+
+def _innermost_dataset_cfg(dataset_cfg):
+    node = dataset_cfg
+    while isinstance(node, dict) and "dataset" in node:
+        node = node["dataset"]
+    return node
+
+
+def _fixed_probe_pipeline(cfg, probe_size):
+    """Fixed-size pipeline for EfficientFormer-safe single forward."""
+    ann = dict(type="LoadAnnotations")
+    val_ds = _innermost_dataset_cfg(cfg.val_dataloader["dataset"])
+    for step in val_ds.get("pipeline", []):
+        if isinstance(step, dict) and step.get("type") == "LoadAnnotations":
+            ann = copy.deepcopy(step)
+            break
+    return [
+        dict(type="LoadImageFromFile"),
+        dict(type="Resize", scale=tuple(probe_size), keep_ratio=False),
+        ann,
+        dict(type="PackSegInputs"),
+    ]
+
+
+def _loader_from_cfg(cfg, split, probe_size):
+    """One-image-at-a-time loader using fixed-size eval transforms.
+
+    Train split deliberately uses eval-style fixed transforms. This preserves
+    train/val image separation while avoiding variable crop sizes, the batch
+    size assertion from earlier active-class probes, and EfficientFormer ASUB
+    reshape failures from ratio-resized whole images.
     """
     from mmengine.runner import Runner
 
@@ -166,13 +218,13 @@ def _loader_from_cfg(cfg, split):
         loader = copy.deepcopy(cfg.val_dataloader)
         loader["batch_size"] = 1
         loader["sampler"] = dict(type="DefaultSampler", shuffle=False)
+        _set_innermost_pipeline(loader["dataset"], _fixed_probe_pipeline(cfg, probe_size))
         return Runner.build_dataloader(loader)
 
     loader = copy.deepcopy(cfg.train_dataloader)
     loader["batch_size"] = 1
     loader["sampler"] = dict(type="DefaultSampler", shuffle=False)
-    val_pipeline = copy.deepcopy(cfg.val_dataloader["dataset"]["pipeline"])
-    _set_innermost_pipeline(loader["dataset"], val_pipeline)
+    _set_innermost_pipeline(loader["dataset"], _fixed_probe_pipeline(cfg, probe_size))
     return Runner.build_dataloader(loader)
 
 
@@ -313,7 +365,7 @@ def _fit_prototypes(model, cfg, args, groups, store):
         print(f"[fit] loaded prototype cache: {args.prototype_cache}", flush=True)
         return payload["prototypes"], payload.get("counts", {}), payload.get("fit_images", 0)
 
-    loader = _loader_from_cfg(cfg, args.fit_split)
+    loader = _loader_from_cfg(cfg, args.fit_split, args.probe_size)
     prototype_banks, counts, fit_images = _collect_prototype_samples(
         model=model,
         dataloader=loader,
@@ -473,7 +525,7 @@ def _miou(inter, union):
 def _eval_cgr(model, cfg, args, groups, prototypes, num_classes, ignore_index, store):
     import torch
 
-    loader = _loader_from_cfg(cfg, args.eval_split)
+    loader = _loader_from_cfg(cfg, args.eval_split, args.probe_size)
     device = args.device
     base_inter = torch.zeros(num_classes, device=device)
     base_union = torch.zeros(num_classes, device=device)
@@ -567,6 +619,7 @@ def _format_report(args, groups, hook_name, counts, fit_images, prototypes, stat
     lines.append(f"feature_hook={hook_name}")
     lines.append(
         f"fit={args.fit_split}:{fit_images} eval={args.eval_split}:{stats['images']} "
+        f"probe_size={args.probe_size[0]}x{args.probe_size[1]} "
         f"K={args.num_prototypes} trigger_topk={args.trigger_topk} "
         f"smooth={args.smooth_iters} margin={args.min_proto_margin:g}"
     )
@@ -609,6 +662,7 @@ def main():
     from mmseg.apis import init_model
 
     cfg = Config.fromfile(args.config)
+    args.probe_size = _probe_size_from_cfg(cfg, args.probe_size)
     model = init_model(cfg, args.checkpoint, device=args.device)
     model.eval()
 

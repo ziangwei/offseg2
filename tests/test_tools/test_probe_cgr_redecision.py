@@ -54,6 +54,8 @@ class TestCGRProbeScaffold(unittest.TestCase):
         text = TOOL.read_text(encoding="utf-8")
 
         self.assertIn("refinement_feat_proj", text)
+        self.assertIn("probe_size", text)
+        self.assertIn("keep_ratio=False", text)
         self.assertIn("gt_sem_seg", text)
         self.assertIn("prototype_banks", text)
         self.assertIn("run_kmeans", text)
