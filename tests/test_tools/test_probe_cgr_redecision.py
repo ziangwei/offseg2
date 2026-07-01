@@ -84,6 +84,8 @@ class TestCGRProbeScaffold(unittest.TestCase):
         self.assertIn("refinement_feat_proj", text)
         self.assertIn("probe_size", text)
         self.assertIn("keep_ratio=False", text)
+        self.assertIn("--min-group-hits", text)
+        self.assertIn("min_group_hits", text)
         self.assertIn("gt_sem_seg", text)
         self.assertIn("prototype_banks", text)
         self.assertIn("run_kmeans", text)

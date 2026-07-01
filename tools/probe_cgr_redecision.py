@@ -138,7 +138,13 @@ def parse_args():
     parser.add_argument("--max-samples-per-class", type=int, default=8192)
     parser.add_argument("--per-image-class-samples", type=int, default=128)
     parser.add_argument("--kmeans-iters", type=int, default=12)
-    parser.add_argument("--trigger-topk", type=int, default=2, help="route if base top-k intersects a group")
+    parser.add_argument("--trigger-topk", type=int, default=2, help="base top-k candidates used for group routing")
+    parser.add_argument(
+        "--min-group-hits",
+        type=int,
+        default=2,
+        help="route only if at least this many top-k classes fall inside the same group",
+    )
     parser.add_argument("--min-proto-margin", type=float, default=0.0)
     parser.add_argument("--smooth-iters", type=int, default=1)
     parser.add_argument("--smooth-sigma", type=float, default=0.15)
@@ -454,7 +460,8 @@ def _group_redecision(final_logits, refinement_feat, groups, prototypes, args):
         if len(class_ids) < 2:
             continue
         ids = torch.tensor(class_ids, device=logits.device, dtype=torch.long)
-        routed = (topk_idx[..., None] == ids.view(1, 1, 1, -1)).any(dim=0).any(dim=-1)
+        group_hits = (topk_idx[..., None] == ids.view(1, 1, 1, -1)).any(dim=-1).sum(dim=0)
+        routed = group_hits >= max(1, int(args.min_group_hits))
         if not bool(routed.any()):
             group_changed[group.name] = 0
             continue
@@ -620,7 +627,7 @@ def _format_report(args, groups, hook_name, counts, fit_images, prototypes, stat
     lines.append(
         f"fit={args.fit_split}:{fit_images} eval={args.eval_split}:{stats['images']} "
         f"probe_size={args.probe_size[0]}x{args.probe_size[1]} "
-        f"K={args.num_prototypes} trigger_topk={args.trigger_topk} "
+        f"K={args.num_prototypes} trigger_topk={args.trigger_topk} min_group_hits={args.min_group_hits} "
         f"smooth={args.smooth_iters} margin={args.min_proto_margin:g}"
     )
     lines.append("")
