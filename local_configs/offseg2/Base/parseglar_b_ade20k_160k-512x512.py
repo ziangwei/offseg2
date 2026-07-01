@@ -14,7 +14,8 @@
 # learning, PAL prototype matching, AGCF all now process 4x the pixels).
 #
 # Warm-started from the tuned PARSeg3 checkpoint (see variant A's config for
-# why), full 160k schedule, launched directly per Ziang's explicit call.
+# why), but kept as a short 32k probe because this is still a finetune, not
+# a full from-scratch run.
 _base_ = ['./parseg3_ade20k_160k-512x512.py']
 
 custom_imports = dict(
@@ -53,7 +54,7 @@ optim_wrapper = dict(
         'norm': dict(decay_mult=0.),
     }))
 
-max_iters = 160000
+max_iters = 32000
 train_cfg = dict(type='IterBasedTrainLoop', max_iters=max_iters, val_interval=8000)
 param_scheduler = [
     dict(type='LinearLR', start_factor=1e-6, by_epoch=False, begin=0, end=1500),

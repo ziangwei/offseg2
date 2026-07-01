@@ -38,7 +38,7 @@ class TestPARSegLARScaffold(unittest.TestCase):
         self.assertIn("def set_image(self, img):", head)
         self.assertIn("self._cur_img", head)
 
-    def test_lar_configs_are_warm_started_full_runs_not_from_scratch(self):
+    def test_lar_configs_are_short_warm_start_finetunes_not_from_scratch(self):
         cfg_a = (ROOT / "local_configs/offseg2/Base/parseglar_a_ade20k_160k-512x512.py").read_text(encoding="utf-8")
         cfg_b = (ROOT / "local_configs/offseg2/Base/parseglar_b_ade20k_160k-512x512.py").read_text(encoding="utf-8")
 
@@ -53,7 +53,8 @@ class TestPARSegLARScaffold(unittest.TestCase):
             self.assertIn("'decode_head.guide_encoder': dict(lr_mult=10.0)", cfg)
             self.assertIn("'decode_head.attender': dict(lr_mult=10.0)", cfg)
             self.assertIn("load_from", cfg)
-            self.assertIn("max_iters = 160000", cfg)
+            self.assertIn("max_iters = 32000", cfg)
+            self.assertIn("val_interval=8000", cfg)
 
     def test_lar_reuses_igr_segmentor_file_unmodified(self):
         # IGREncoderDecoder already does exactly what LAR needs (stash the

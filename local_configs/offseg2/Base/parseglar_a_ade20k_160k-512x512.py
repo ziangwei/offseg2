@@ -8,8 +8,8 @@
 # have landed anywhere from 48.17 to 48.84 mIoU on this repo already, purely
 # from run-to-run variance. Warm-start removes that confound -- any
 # deviation from the loaded checkpoint's 48.17/48.2 is attributable to LAR
-# itself. Per Ziang's explicit call: no short gate-and-stop, full 160k
-# schedule, launch directly.
+# itself. This is a short warm-start finetune, not a 160k retrain: evaluate
+# at 8k/16k/24k/32k and stop if it cannot recover the PARSeg3 baseline.
 _base_ = ['./parseg3_ade20k_160k-512x512.py']
 
 custom_imports = dict(
@@ -39,7 +39,7 @@ model = dict(
         )))
 
 # warm-start LR (not the original 6e-5 peak, to avoid a disruptive hot
-# restart of an already-converged checkpoint), decayed over the full 160k.
+# restart of an already-converged checkpoint), decayed over a 32k probe run.
 optim_wrapper = dict(
     _delete_=True,
     type='OptimWrapper',
@@ -51,7 +51,7 @@ optim_wrapper = dict(
         'norm': dict(decay_mult=0.),
     }))
 
-max_iters = 160000
+max_iters = 32000
 train_cfg = dict(type='IterBasedTrainLoop', max_iters=max_iters, val_interval=8000)
 param_scheduler = [
     dict(type='LinearLR', start_factor=1e-6, by_epoch=False, begin=0, end=1500),
