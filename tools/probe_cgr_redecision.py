@@ -119,6 +119,15 @@ def _load_group_specs(path):
     return payload
 
 
+def _parse_float_list(text):
+    values = []
+    for raw in str(text).split(","):
+        raw = raw.strip()
+        if raw:
+            values.append(float(raw))
+    return values
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Training-free CGR confusion-group re-decision probe.")
     parser.add_argument("config", help="mmseg config path")
@@ -146,6 +155,11 @@ def parse_args():
         help="route only if at least this many top-k classes fall inside the same group",
     )
     parser.add_argument("--min-proto-margin", type=float, default=0.0)
+    parser.add_argument(
+        "--sweep-margins",
+        default=None,
+        help="comma-separated proto-margin values to evaluate in one val pass, e.g. 0,0.5,1,2,4",
+    )
     parser.add_argument("--smooth-iters", type=int, default=1)
     parser.add_argument("--smooth-sigma", type=float, default=0.15)
     parser.add_argument("--prototype-temp", type=float, default=0.07)
@@ -455,6 +469,7 @@ def _group_redecision(final_logits, refinement_feat, groups, prototypes, args):
     temp = max(float(args.prototype_temp), 1e-6)
 
     group_changed = {}
+    group_masks = {}
     for group in groups:
         class_ids = [class_id for class_id in group.class_ids if class_id in prototypes]
         if len(class_ids) < 2:
@@ -486,7 +501,8 @@ def _group_redecision(final_logits, refinement_feat, groups, prototypes, args):
         new_pred[apply] = candidate[apply]
         replace_mask |= apply
         group_changed[group.name] = int(apply.sum().item())
-    return new_pred, replace_mask, group_changed
+        group_masks[group.name] = apply
+    return new_pred, replace_mask, group_changed, group_masks
 
 
 def _resize_logits_to_gt(logits, gt_hw):
@@ -529,6 +545,25 @@ def _miou(inter, union):
     return float((inter[valid] / union[valid].clamp_min(1.0)).mean().item() * 100.0)
 
 
+def _new_cgr_stats(num_classes, device):
+    return dict(
+        cgr_inter=torch_zeros(num_classes, device),
+        cgr_union=torch_zeros(num_classes, device),
+        changed_px=0,
+        valid_px=0,
+        corrected_px=0,
+        damaged_px=0,
+        group_changed=defaultdict(int),
+        group_damage=defaultdict(lambda: dict(routed_feature_px=0, changed_px=0, correction=0, damage=0)),
+    )
+
+
+def torch_zeros(num_classes, device):
+    import torch
+
+    return torch.zeros(num_classes, device=device)
+
+
 def _eval_cgr(model, cfg, args, groups, prototypes, num_classes, ignore_index, store):
     import torch
 
@@ -536,13 +571,7 @@ def _eval_cgr(model, cfg, args, groups, prototypes, num_classes, ignore_index, s
     device = args.device
     base_inter = torch.zeros(num_classes, device=device)
     base_union = torch.zeros(num_classes, device=device)
-    cgr_inter = torch.zeros(num_classes, device=device)
-    cgr_union = torch.zeros(num_classes, device=device)
-    changed_px = 0
-    valid_px = 0
-    corrected_px = 0
-    damaged_px = 0
-    group_changed = defaultdict(int)
+    margin_sweep = {float(margin): _new_cgr_stats(num_classes, device) for margin in args.margin_sweep}
     seen = 0
 
     with torch.no_grad():
@@ -555,31 +584,45 @@ def _eval_cgr(model, cfg, args, groups, prototypes, num_classes, ignore_index, s
                 full_logits = _resize_logits_to_gt(final_logits[batch_idx], target_hw)
                 base_pred = full_logits.argmax(dim=0)
 
-                small_pred, small_mask, small_group_changed = _group_redecision(
-                    final_logits[batch_idx], feats[batch_idx], groups, prototypes, args
-                )
-                redecision = _upsample_label(small_pred, target_hw)
-                mask = _upsample_mask(small_mask, target_hw)
-                cgr_pred = base_pred.clone()
-                cgr_pred[mask] = redecision[mask]
-
                 bi, bu = _intersect_union(base_pred, gt, num_classes, ignore_index)
-                ci, cu = _intersect_union(cgr_pred, gt, num_classes, ignore_index)
                 base_inter += bi
                 base_union += bu
-                cgr_inter += ci
-                cgr_union += cu
 
                 valid = gt != ignore_index
-                changed = (base_pred != cgr_pred) & valid
-                corrected = (base_pred != gt) & (cgr_pred == gt) & valid
-                damaged = (base_pred == gt) & (cgr_pred != gt) & valid
-                changed_px += int(changed.sum().item())
-                valid_px += int(valid.sum().item())
-                corrected_px += int(corrected.sum().item())
-                damaged_px += int(damaged.sum().item())
-                for name, value in small_group_changed.items():
-                    group_changed[name] += int(value)
+                for margin, stat in margin_sweep.items():
+                    margin_args = copy.copy(args)
+                    margin_args.min_proto_margin = margin
+                    small_pred, small_mask, small_group_changed, small_group_masks = _group_redecision(
+                        final_logits[batch_idx], feats[batch_idx], groups, prototypes, margin_args
+                    )
+                    redecision = _upsample_label(small_pred, target_hw)
+                    mask = _upsample_mask(small_mask, target_hw)
+                    cgr_pred = base_pred.clone()
+                    cgr_pred[mask] = redecision[mask]
+
+                    ci, cu = _intersect_union(cgr_pred, gt, num_classes, ignore_index)
+                    stat["cgr_inter"] += ci
+                    stat["cgr_union"] += cu
+
+                    changed = (base_pred != cgr_pred) & valid
+                    corrected = (base_pred != gt) & (cgr_pred == gt) & valid
+                    damaged = (base_pred == gt) & (cgr_pred != gt) & valid
+                    stat["changed_px"] += int(changed.sum().item())
+                    stat["valid_px"] += int(valid.sum().item())
+                    stat["corrected_px"] += int(corrected.sum().item())
+                    stat["damaged_px"] += int(damaged.sum().item())
+                    for name, value in small_group_changed.items():
+                        stat["group_changed"][name] += int(value)
+                    for name, small_group_mask in small_group_masks.items():
+                        group_mask = _upsample_mask(small_group_mask, target_hw) & valid
+                        group_changed = changed & group_mask
+                        group_corrected = corrected & group_mask
+                        group_damaged = damaged & group_mask
+                        group_damage = stat["group_damage"][name]
+                        group_damage["routed_feature_px"] += int(small_group_changed.get(name, 0))
+                        group_damage["changed_px"] += int(group_changed.sum().item())
+                        group_damage["correction"] += int(group_corrected.sum().item())
+                        group_damage["damage"] += int(group_damaged.sum().item())
 
                 seen += 1
                 if args.progress_interval > 0 and seen % args.progress_interval == 0:
@@ -589,35 +632,54 @@ def _eval_cgr(model, cfg, args, groups, prototypes, num_classes, ignore_index, s
                         images=seen,
                         base_inter=base_inter,
                         base_union=base_union,
-                        cgr_inter=cgr_inter,
-                        cgr_union=cgr_union,
-                        changed_px=changed_px,
-                        valid_px=valid_px,
-                        corrected_px=corrected_px,
-                        damaged_px=damaged_px,
-                        group_changed=dict(group_changed),
+                        margin_sweep=_finalize_margin_sweep(margin_sweep),
                     )
 
     return dict(
         images=seen,
         base_inter=base_inter,
         base_union=base_union,
-        cgr_inter=cgr_inter,
-        cgr_union=cgr_union,
-        changed_px=changed_px,
-        valid_px=valid_px,
-        corrected_px=corrected_px,
-        damaged_px=damaged_px,
-        group_changed=dict(group_changed),
+        margin_sweep=_finalize_margin_sweep(margin_sweep),
     )
+
+
+def _finalize_margin_sweep(margin_sweep):
+    finalized = {}
+    for margin, stat in margin_sweep.items():
+        item = dict(stat)
+        item["group_changed"] = dict(item["group_changed"])
+        item["group_damage"] = {name: dict(values) for name, values in item["group_damage"].items()}
+        finalized[margin] = item
+    return finalized
+
+
+def _primary_margin(args, stats):
+    margins = list(stats["margin_sweep"].keys())
+    if float(args.min_proto_margin) in stats["margin_sweep"]:
+        return float(args.min_proto_margin)
+    return margins[0]
+
+
+def _best_margin(stats):
+    return max(stats["margin_sweep"], key=lambda margin: _miou(
+        stats["margin_sweep"][margin]["cgr_inter"],
+        stats["margin_sweep"][margin]["cgr_union"],
+    ))
 
 
 def _format_report(args, groups, hook_name, counts, fit_images, prototypes, stats):
     base_miou = _miou(stats["base_inter"], stats["base_union"])
-    cgr_miou = _miou(stats["cgr_inter"], stats["cgr_union"])
+    primary_margin = _primary_margin(args, stats)
+    primary = stats["margin_sweep"][primary_margin]
+    cgr_miou = _miou(primary["cgr_inter"], primary["cgr_union"])
     delta = cgr_miou - base_miou
-    changed_rate = 100.0 * stats["changed_px"] / max(stats["valid_px"], 1)
-    ratio = stats["corrected_px"] / max(stats["damaged_px"], 1)
+    changed_rate = 100.0 * primary["changed_px"] / max(primary["valid_px"], 1)
+    ratio = primary["corrected_px"] / max(primary["damaged_px"], 1)
+    best_margin = _best_margin(stats)
+    best = stats["margin_sweep"][best_margin]
+    best_miou = _miou(best["cgr_inter"], best["cgr_union"])
+    best_delta = best_miou - base_miou
+    best_ratio = best["corrected_px"] / max(best["damaged_px"], 1)
 
     lines = []
     lines.append("[CGR TRAINING-FREE RE-DECISION PROBE]")
@@ -640,22 +702,51 @@ def _format_report(args, groups, hook_name, counts, fit_images, prototypes, stat
         lines.append(f"- {group.name}: " + ", ".join(proto_info) + miss)
     lines.append("")
     lines.append(f"baseline_mIoU : {base_miou:.4f}")
+    lines.append(f"primary_margin: {primary_margin:g}")
     lines.append(f"cgr_mIoU      : {cgr_miou:.4f}")
     lines.append(f"delta         : {delta:+.4f}")
-    lines.append(f"changed_px    : {stats['changed_px']} / {stats['valid_px']} ({changed_rate:.3f}%)")
-    lines.append(f"correction    : {stats['corrected_px']}")
-    lines.append(f"damage        : {stats['damaged_px']}")
+    lines.append(f"changed_px    : {primary['changed_px']} / {primary['valid_px']} ({changed_rate:.3f}%)")
+    lines.append(f"correction    : {primary['corrected_px']}")
+    lines.append(f"damage        : {primary['damaged_px']}")
     lines.append(f"corr/damage   : {ratio:.3f}")
-    if stats["group_changed"]:
+    if len(stats["margin_sweep"]) > 1:
         lines.append("")
-        lines.append("[changed feature-pixels by group]")
-        for name, value in sorted(stats["group_changed"].items()):
+        lines.append("[margin_sweep]")
+        lines.append(f"{'margin':>8} {'mIoU':>9} {'delta':>9} {'changed%':>10} {'corr':>12} {'damage':>12} {'c/d':>8}")
+        for margin in sorted(stats["margin_sweep"]):
+            item = stats["margin_sweep"][margin]
+            miou = _miou(item["cgr_inter"], item["cgr_union"])
+            changed = 100.0 * item["changed_px"] / max(item["valid_px"], 1)
+            cd = item["corrected_px"] / max(item["damaged_px"], 1)
+            lines.append(
+                f"{margin:>8g} {miou:>9.4f} {miou - base_miou:>+9.4f} "
+                f"{changed:>9.3f}% {item['corrected_px']:>12} {item['damaged_px']:>12} {cd:>8.3f}"
+            )
+        lines.append("")
+        lines.append(f"best_margin   : {best_margin:g}")
+        lines.append(f"best_mIoU     : {best_miou:.4f}")
+        lines.append(f"best_delta    : {best_delta:+.4f}")
+        lines.append(f"best_corr/dmg : {best_ratio:.3f}")
+    if primary["group_changed"]:
+        lines.append("")
+        lines.append("[routed feature-pixels by group @ primary_margin]")
+        for name, value in sorted(primary["group_changed"].items()):
             lines.append(f"- {name}: {value}")
+    if best["group_damage"]:
+        lines.append("")
+        lines.append(f"[group_damage @ best_margin={best_margin:g}]")
+        lines.append(f"{'group':<16} {'routed_fpx':>12} {'changed_px':>12} {'corr':>12} {'damage':>12} {'c/d':>8}")
+        for name, value in sorted(best["group_damage"].items()):
+            gd_ratio = value["correction"] / max(value["damage"], 1)
+            lines.append(
+                f"{name:<16} {value['routed_feature_px']:>12} {value['changed_px']:>12} "
+                f"{value['correction']:>12} {value['damage']:>12} {gd_ratio:>8.3f}"
+            )
     lines.append("")
     lines.append("[read]")
-    if delta >= 0.20:
+    if best_delta >= 0.20:
         lines.append("CGR has enough direct geometry signal to justify writing a trainable head.")
-    elif delta >= 0.05 and ratio > 1.0:
+    elif best_delta >= 0.05 and best_ratio > 1.0:
         lines.append("CGR is positive but small; next step should be a very light gate, not a heavy decoder.")
     else:
         lines.append("CGR does not yet beat the base enough; inspect group damage before writing a full model.")
@@ -670,6 +761,7 @@ def main():
 
     cfg = Config.fromfile(args.config)
     args.probe_size = _probe_size_from_cfg(cfg, args.probe_size)
+    args.margin_sweep = _parse_float_list(args.sweep_margins) if args.sweep_margins else [float(args.min_proto_margin)]
     model = init_model(cfg, args.checkpoint, device=args.device)
     model.eval()
 
