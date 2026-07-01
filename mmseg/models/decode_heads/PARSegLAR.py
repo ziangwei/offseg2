@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PARSeg-LAR: image-guided Local-Attender feature enrichment.
+"""PARSeg-LAR: image-guided local feature reprojection.
 
 Inspired by two feature-upsampling papers (read in full, not just abstracts):
   * NAF (Neighborhood Attention Filtering): a Dual-Branch Guidance Encoder
@@ -23,10 +23,10 @@ boundary/detail bet, not a fix for the dominant interior-confusion error
 pool.
 
 Two modes via `args['lar_upsample_factor']`:
-  * 1 (variant A): same-resolution remix of `feat_aligned`. Wrapped in an
-    small residual gate, with center-biased local attention, so the warm
-    start is a controlled near-identity perturbation rather than a feature
-    blur.
+  * 1 (variant A): same-resolution image-guided reprojection of
+    `feat_aligned`. A spatial gate predicted from the image guide decides
+    where local reprojection should be trusted, so this is an end-to-end
+    method block rather than a global warm-start scalar perturbation.
   * 2 (variant B): a literal 2x upsample of `feat_aligned` BEFORE
     offset_learning / PAL refinement / AGCF, so the whole decode head
     decides at 4x the spatial density. This CANNOT be a same-shape identity
@@ -129,6 +129,36 @@ class LocalAttender(nn.Module):
         return (gathered * attn.unsqueeze(2)).sum(dim=1)
 
 
+class LocalReprojectionGate(nn.Module):
+    """Image-guided spatial gate for same-resolution LAR.
+
+    The gate is predicted from the guide feature only, so it asks where the
+    image structure supports local feature reprojection without using the
+    backbone feature to re-score its own semantic errors. It is initialized to
+    a small value everywhere, preserving a stable from-scratch start while
+    still allowing the gate to become boundary/detail selective during
+    ordinary segmentation training.
+    """
+
+    def __init__(self, guide_channels, gate_max=0.30, gate_init=0.05):
+        super().__init__()
+        gate_max = float(gate_max)
+        gate_init = float(gate_init)
+        if gate_max <= 0:
+            raise ValueError("lar_gate_max must be positive")
+        if not (0.0 < gate_init < gate_max):
+            raise ValueError("lar_gate_init must satisfy 0 < init < lar_gate_max")
+
+        self.gate_max = gate_max
+        self.gate_conv = nn.Conv2d(guide_channels, 1, kernel_size=1, bias=True)
+        nn.init.zeros_(self.gate_conv.weight)
+        ratio = gate_init / gate_max
+        nn.init.constant_(self.gate_conv.bias, math.log(ratio / (1.0 - ratio)))
+
+    def forward(self, guide):
+        return self.gate_max * torch.sigmoid(self.gate_conv(guide))
+
+
 @MODELS.register_module()
 class PARSegLAR(PARSeg3):
     """PARSeg3 with an image-guided Local-Attender enrichment step inserted
@@ -163,13 +193,10 @@ class PARSegLAR(PARSeg3):
         )
 
         if self.upsample_factor == 1:
-            gate_max = float(self.args.get('lar_gate_max', 0.30))
-            init_gate = float(self.args.get('lar_gate_init', 0.05))
-            init_gate = min(max(init_gate, 1e-4), gate_max - 1e-4)
-            ratio = init_gate / gate_max
-            self.lar_gate_max = gate_max
-            self.lar_alpha = nn.Parameter(
-                torch.tensor(math.log(ratio / (1.0 - ratio)), dtype=torch.float32)
+            self.reprojection_gate = LocalReprojectionGate(
+                guide_channels=self.guide_encoder.out_channels,
+                gate_max=float(self.args.get('lar_gate_max', 0.30)),
+                gate_init=float(self.args.get('lar_gate_init', 0.05)),
             )
 
         self._cur_img = None
@@ -177,9 +204,6 @@ class PARSegLAR(PARSeg3):
     # -- the IGREncoderDecoder segmentor hands us the input image here --
     def set_image(self, img):
         self._cur_img = img
-
-    def _lar_gate(self):
-        return self.lar_gate_max * torch.sigmoid(self.lar_alpha)
 
     def forward(self, inputs, return_vis=False):
         assert self._cur_img is not None, (
@@ -219,7 +243,8 @@ class PARSegLAR(PARSeg3):
         enriched = self.attender(guide, feat_aligned)
 
         if self.upsample_factor == 1:
-            feat_aligned = feat_aligned + self._lar_gate() * (enriched - feat_aligned)
+            gate = self.reprojection_gate(guide)
+            feat_aligned = feat_aligned + gate * (enriched - feat_aligned)
         else:
             # genuinely higher resolution now -- no same-shape identity to
             # gate against; downstream modules decide at the new density.

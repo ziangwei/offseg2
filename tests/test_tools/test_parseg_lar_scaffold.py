@@ -12,6 +12,7 @@ class TestPARSegLARScaffold(unittest.TestCase):
 
         self.assertIn("class DualBranchGuideEncoder", head)
         self.assertIn("class LocalAttender", head)
+        self.assertIn("class LocalReprojectionGate", head)
         self.assertIn("class PARSegLAR(PARSeg3)", head)
         # guidance must come only from the image, never from feat_aligned / backbone features
         self.assertIn("def forward(self, image):", head)
@@ -25,8 +26,14 @@ class TestPARSegLARScaffold(unittest.TestCase):
         self.assertIn("self.weight_conv.bias[center_idx].fill_(self.center_bias)", head)
         self.assertIn("F.softmax(self.weight_conv(guide), dim=1)", head)
         self.assertIn("guide and value spatial sizes must match", head)
-        # variant A (upsample_factor=1) must be a bounded near-identity gate
-        self.assertIn("feat_aligned + self._lar_gate() * (enriched - feat_aligned)", head)
+        # LAR-A should be a method-level same-resolution reprojection block:
+        # the strength is spatially predicted from image guidance, not a
+        # PARSeg3 warm-start scalar knob.
+        self.assertIn("self.reprojection_gate = LocalReprojectionGate", head)
+        self.assertIn("gate = self.reprojection_gate(guide)", head)
+        self.assertIn("feat_aligned = feat_aligned + gate * (enriched - feat_aligned)", head)
+        self.assertNotIn("def _lar_gate", head)
+        self.assertNotIn("self.lar_alpha", head)
         # variant B (upsample_factor>1) is honestly NOT identity-safe -- must not
         # pretend otherwise by gating it the same way
         self.assertIn("feat_aligned = enriched", head)
@@ -38,23 +45,26 @@ class TestPARSegLARScaffold(unittest.TestCase):
         self.assertIn("def set_image(self, img):", head)
         self.assertIn("self._cur_img", head)
 
-    def test_lar_configs_are_short_warm_start_finetunes_not_from_scratch(self):
+    def test_lar_a_config_is_from_scratch_method_and_lar_b_stays_ablation(self):
         cfg_a = (ROOT / "local_configs/offseg2/Base/parseglar_a_ade20k_160k-512x512.py").read_text(encoding="utf-8")
         cfg_b = (ROOT / "local_configs/offseg2/Base/parseglar_b_ade20k_160k-512x512.py").read_text(encoding="utf-8")
 
-        for cfg, factor in [(cfg_a, "lar_upsample_factor=1"), (cfg_b, "lar_upsample_factor=2")]:
-            self.assertIn("mmseg.models.decode_heads.PARSegLAR", cfg)
-            self.assertIn("mmseg.models.segmentors.igr_encoder_decoder", cfg)
-            self.assertIn("type='IGREncoderDecoder'", cfg)
-            self.assertIn("freeze_base=False", cfg)
-            self.assertIn("type='PARSegLAR'", cfg)
-            self.assertIn(factor, cfg)
-            self.assertIn("lar_center_bias=6.0", cfg)
-            self.assertIn("'decode_head.guide_encoder': dict(lr_mult=10.0)", cfg)
-            self.assertIn("'decode_head.attender': dict(lr_mult=10.0)", cfg)
-            self.assertIn("load_from", cfg)
-            self.assertIn("max_iters = 32000", cfg)
-            self.assertIn("val_interval=8000", cfg)
+        self.assertIn("mmseg.models.decode_heads.PARSegLAR", cfg_a)
+        self.assertIn("mmseg.models.segmentors.igr_encoder_decoder", cfg_a)
+        self.assertIn("type='IGREncoderDecoder'", cfg_a)
+        self.assertIn("freeze_base=False", cfg_a)
+        self.assertIn("type='PARSegLAR'", cfg_a)
+        self.assertIn("lar_upsample_factor=1", cfg_a)
+        self.assertIn("lar_gate_init=0.05", cfg_a)
+        self.assertIn("lar_gate_max=0.30", cfg_a)
+        self.assertNotIn("load_from", cfg_a)
+        self.assertNotIn("iter_160000.pth", cfg_a)
+        self.assertNotIn("max_iters = 32000", cfg_a)
+        self.assertNotIn("optimizer=dict(type='AdamW', lr=0.00002", cfg_a)
+
+        # Variant B remains available only as a high-resolution ablation; the
+        # main LAR-A config is the from-scratch method setting.
+        self.assertIn("lar_upsample_factor=2", cfg_b)
 
     def test_lar_reuses_igr_segmentor_file_unmodified(self):
         # IGREncoderDecoder already does exactly what LAR needs (stash the
