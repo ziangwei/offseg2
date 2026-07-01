@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+from types import SimpleNamespace
 import unittest
 
 
@@ -49,6 +50,33 @@ class TestCGRProbeScaffold(unittest.TestCase):
         self.assertEqual([group.name for group in sparse], ["wall_family"])
         self.assertEqual(sparse[0].class_ids, [0, 1])
         self.assertIn("door", sparse[0].missing)
+
+    def test_fixed_probe_pipeline_resizes_image_and_label_together(self):
+        tool = _load_tool()
+        cfg = SimpleNamespace(
+            val_dataloader=dict(
+                dataset=dict(
+                    pipeline=[
+                        dict(type="LoadImageFromFile"),
+                        dict(type="Resize", scale=(2048, 512), keep_ratio=True),
+                        dict(type="LoadAnnotations", reduce_zero_label=True),
+                        dict(type="PackSegInputs"),
+                    ]
+                )
+            )
+        )
+
+        pipeline = tool._fixed_probe_pipeline(cfg, (512, 512))
+
+        self.assertEqual([step["type"] for step in pipeline], [
+            "LoadImageFromFile",
+            "LoadAnnotations",
+            "Resize",
+            "PackSegInputs",
+        ])
+        self.assertEqual(pipeline[1]["reduce_zero_label"], True)
+        self.assertEqual(pipeline[2]["scale"], (512, 512))
+        self.assertEqual(pipeline[2]["keep_ratio"], False)
 
     def test_probe_uses_pure_gt_feature_prototypes_not_base_confidence(self):
         text = TOOL.read_text(encoding="utf-8")

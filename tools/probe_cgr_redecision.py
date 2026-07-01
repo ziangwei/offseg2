@@ -189,7 +189,7 @@ def _innermost_dataset_cfg(dataset_cfg):
 
 
 def _fixed_probe_pipeline(cfg, probe_size):
-    """Fixed-size pipeline for EfficientFormer-safe single forward."""
+    """Fixed-size pipeline for EfficientFormer-safe, label-aligned forward."""
     ann = dict(type="LoadAnnotations")
     val_ds = _innermost_dataset_cfg(cfg.val_dataloader["dataset"])
     for step in val_ds.get("pipeline", []):
@@ -198,8 +198,8 @@ def _fixed_probe_pipeline(cfg, probe_size):
             break
     return [
         dict(type="LoadImageFromFile"),
-        dict(type="Resize", scale=tuple(probe_size), keep_ratio=False),
         ann,
+        dict(type="Resize", scale=tuple(probe_size), keep_ratio=False),
         dict(type="PackSegInputs"),
     ]
 
