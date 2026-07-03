@@ -9,6 +9,8 @@ FULL_CFG = ROOT / "local_configs" / "offseg2" / "Base" / "parseglcr_ade20k_160k-
 FT_CFG = ROOT / "local_configs" / "offseg2" / "Base" / "parseglcr_ft_ade20k_160k-512x512.py"
 CONTINUE_CFG = ROOT / "local_configs" / "offseg2" / "Base" / "parseglcr_ade20k_200k-512x512.py"
 RESUME_SCRIPT = ROOT / "tools" / "train_parseglcr_200k_resume.sh"
+POST40K_CFG = ROOT / "local_configs" / "offseg2" / "Base" / "parseglcr_post40k_from160k_ade20k-512x512.py"
+POST40K_SCRIPT = ROOT / "tools" / "train_parseglcr_post40k_from160k.sh"
 
 
 class TestPARSegLCRScaffold(unittest.TestCase):
@@ -78,6 +80,22 @@ class TestPARSegLCRScaffold(unittest.TestCase):
         self.assertIn("[[ ! -f \"$CKPT\" ]]", script)
         self.assertIn("--resume", script)
         self.assertIn("load_from=\"$CKPT\"", script)
+
+    def test_post40k_config_loads_lcr_checkpoint_without_strict_resume(self):
+        cfg = POST40K_CFG.read_text(encoding="utf-8")
+        script = POST40K_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("_base_ = ['./parseglcr_ade20k_160k-512x512.py']", cfg)
+        self.assertIn("parseglcr_ade20k_160k-512x512_4x4_try1/iter_160000.pth", cfg)
+        self.assertIn("max_iters = 40000", cfg)
+        self.assertIn("begin=1000, end=max_iters", cfg)
+        self.assertNotIn("resume = True", cfg)
+
+        self.assertIn("parseglcr_post40k_from160k_ade20k-512x512.py", script)
+        self.assertIn("parseglcr_post40k_from160k_ade20k-512x512_4x4_try1", script)
+        self.assertIn("[[ ! -f \"$CKPT\" ]]", script)
+        self.assertIn("load_from=\"$CKPT\"", script)
+        self.assertNotIn("--resume", script)
 
 
 if __name__ == "__main__":
