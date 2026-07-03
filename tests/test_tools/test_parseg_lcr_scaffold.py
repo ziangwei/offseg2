@@ -88,7 +88,12 @@ class TestPARSegLCRScaffold(unittest.TestCase):
         self.assertIn("_base_ = ['./parseglcr_ade20k_160k-512x512.py']", cfg)
         self.assertIn("parseglcr_ade20k_160k-512x512_4x4_try1/iter_160000.pth", cfg)
         self.assertIn("max_iters = 40000", cfg)
-        self.assertIn("begin=1000, end=max_iters", cfg)
+        self.assertIn("lr=0.000001", cfg)
+        self.assertIn("eta_min=1e-8", cfg)
+        self.assertIn("begin=0, end=max_iters", cfg)
+        self.assertNotIn("lr=0.00002", cfg)
+        self.assertNotIn("'head': dict(lr_mult=10.)", cfg)
+        self.assertNotIn("LinearLR", cfg)
         self.assertNotIn("resume = True", cfg)
 
         self.assertIn("parseglcr_post40k_from160k_ade20k-512x512.py", script)
