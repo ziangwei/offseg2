@@ -1,5 +1,7 @@
 _base_ = ['../../offseg/Base/offseg-b_stuff164k_80k-512x512.py']
 
+coco_data_root = '/dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/xjn/coco_stuff164k'
+
 model = dict(
     decode_head=dict(
         type='PARSeg3',
@@ -18,4 +20,7 @@ model = dict(
         )))
 
 # 4 GPUs x 4 images/GPU for COCO-Stuff.
-train_dataloader = dict(batch_size=4)
+train_dataloader = dict(
+    batch_size=4, dataset=dict(data_root=coco_data_root))
+val_dataloader = dict(dataset=dict(data_root=coco_data_root))
+test_dataloader = dict(dataset=dict(data_root=coco_data_root))
