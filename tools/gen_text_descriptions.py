@@ -21,7 +21,31 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gen_text_anchors import ADE_CLASSES               # exact official order
-from ade20k_class_descriptions import DESCRIPTIONS
+
+DESC_TXT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        'ade20k_class_descriptions.txt')
+
+
+def load_descriptions(path=DESC_TXT):
+    """Parse the plain-text description file: `[class name]` line starts a
+    class, each following non-empty line is one description. Comment lines
+    start with '#'. Every class must have the same description count."""
+    desc, cur = {}, None
+    for raw in open(path, encoding='utf-8').read().splitlines():
+        line = raw.rstrip('\n')
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        if line.startswith('[') and line.endswith(']'):
+            cur = line[1:-1]          # keep verbatim (incl. 'bed ' space)
+            desc[cur] = []
+        elif cur is not None:
+            desc[cur].append(line.strip())
+        else:
+            raise ValueError(f'description line before any [class]: {line!r}')
+    return desc
+
+
+DESCRIPTIONS = load_descriptions()
 
 
 def main():
