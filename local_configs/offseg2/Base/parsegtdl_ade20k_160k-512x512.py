@@ -7,10 +7,21 @@
 # no text model in any graph, no per-image text, no leakage surface. Base
 # head untouched; enrichment on the PAL side only.
 #
+# Retrieval is explicitly ANCHORED (v2, pre-launch fix of the "supervision
+# too indirect -> degenerates into a generic feature bias" failure mode):
+# a training-only GT-routed alignment loss pushes each pixel's attention
+# mass onto its GT class's own K dictionary entries (weight 0.1, ramped),
+# so the dictionary must be used semantically, not as a random basis.
+#
+# Live monitoring: `acc_tdl_gt_mass` in the train log = mean attention mass
+# on the GT class's entries. Uniform baseline ~ 1/150 = 0.0067; it rising
+# toward 0.1+ means semantic retrieval is forming.
+#
 # Requires (once, server): python tools/gen_text_descriptions.py
-# Read-out vs base try1 (48.17). Watch the learned gate in the ckpt
-# (prototype_attribute_refinement.tdl_lookup.gate_alpha): gate -> 0 means
-# the model rejected the dictionary. Kill: 96k-128k clearly below try1.
+# Read-out vs base try1 (48.17). Post-training forensics: learned gate
+# (tdl_lookup.gate_alpha; gate -> 0 = dictionary rejected). If TDL wins,
+# the decisive text-content ablation is one line: tdl_random_bank=True
+# (same-shape fixed random bank). Kill: 96k-128k clearly below try1.
 _base_ = ['./parseg3_ade20k_160k-512x512.py']
 
 custom_imports = dict(
@@ -26,4 +37,7 @@ model = dict(
             tdl_attn_dim=64,
             tdl_gate_max=0.5,
             tdl_gate_init=0.05,
+            tdl_alignw=0.1,
+            tdl_warmup_iters=8000,
+            tdl_random_bank=False,
         )))

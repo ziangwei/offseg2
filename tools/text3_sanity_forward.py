@@ -110,24 +110,36 @@ def main():
     # ================= TDL =================
     m2 = build(PARSegTDL, fake, seed=1)
     m2.train()
+    m2._tdl_step = 100  # ramp = 1
     lk = m2.prototype_attribute_refinement.tdl_lookup
     g0 = float(lk.gate())
     assert abs(g0 - 0.05) < 1e-3, f'gate should init at 0.05, got {g0}'
     base2 = m2.offset_learning(feat)
     ref2, cal2 = m2.prototype_attribute_refinement(feat, base2)
+    assert lk.last_attn is not None, 'attention not stashed in training mode'
     out2 = dict(base_head_logits=base2, refinement_head_logits=ref2,
                 calibrated_attr_tokens=cal2,
                 final_logits=m2.fusion(base2, ref2))
     losses2 = m2.loss_by_feat(out2, samples)
+    assert 'loss_tdl_align' in losses2, 'alignment loss missing'
+    assert 'acc_tdl_gt_mass' in losses2, 'monitoring needle missing'
+    gm = float(losses2['acc_tdl_gt_mass'])
+    assert 0.0 < gm < 1.0, f'gt-mass out of range: {gm}'
     for k, v in losses2.items():
         assert torch.isfinite(v).all(), f'TDL {k} not finite'
-    sum(losses2.values()).backward()
+    assert lk.last_attn is None, 'attention not cleared after loss'
+    sum(v for k, v in losses2.items() if k.startswith('loss')).backward()
     gq = sum(float(p.grad.abs().sum()) for p in
              (lk.q_proj.weight, lk.k_proj.weight, lk.v_proj.weight))
     ga = float(lk.gate_alpha.grad.abs())
     assert gq > 0 and ga >= 0, 'dictionary pathway got no gradient'
-    print(f'  TDL: gate init {g0:.3f} (max 0.5), losses finite, dictionary '
-          f'q/k/v grads flow ({gq:.2f}): OK')
+    m2.eval()
+    with torch.no_grad():
+        m2.prototype_attribute_refinement(feat, base2)
+    assert lk.last_attn is None, 'attention leaked into eval'
+    print(f'  TDL: gate init {g0:.3f}, align loss + gt-mass needle '
+          f'({gm:.4f}, uniform={1/NC:.4f}) OK, q/k/v grads flow ({gq:.2f}), '
+          'no eval leak')
 
     # ================= TAM =================
     m3 = build(PARSegTAM, fake, seed=2)

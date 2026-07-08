@@ -7,19 +7,24 @@ features retrieve from it by single-head cross-attention -- each pixel asks
 "which described attributes am I looking at" and receives a mixture of
 attribute value vectors, added back through a bounded, small-initialized
 gate. This is the direct train/inference-symmetric migration of DTFormer's
-TSAM idea, with the two changes this project's principles require: the
-dictionary is a frozen OFFLINE constant (no text model in any graph, no
-per-image text, no leakage surface), and the injection starts near-identity.
+TSAM idea: the dictionary is a frozen OFFLINE constant (no text model in
+any graph, no per-image text, no leakage surface).
+
+v2 (pre-launch): retrieval is explicitly ANCHORED. A training-only
+GT-routed alignment loss pushes each pixel's attention mass onto its GT
+class's K dictionary entries, answering the "supervision too indirect ->
+degenerates into a generic feature bias / random-basis layer" failure mode.
+Small weight + ramp keep CE in charge early; the bounded gate caps the
+wrong-class-retrieval feedback at inference.
 
 Why the name-cone failure does not apply: the dictionary parameterizes
 retrievable CONTENT (values mixed by attention), not class-identity
-directions -- no class-discrimination constraint is placed on text
-geometry. Two classes sharing attribute vocabulary is semantically correct
-here, not collapse. The base head is untouched: enrichment happens on the
-PAL refinement side only, so the base CE anchor of the recipe stays intact.
+directions. The base head is untouched: enrichment happens on the PAL
+refinement side only.
 
 args (new): tdl_desc_path='assets/text_anchors/ade20k_clip_vitb32_desc6.pt',
-            tdl_attn_dim=64, tdl_gate_max=0.5, tdl_gate_init=0.05
+            tdl_attn_dim=64, tdl_gate_max=0.5, tdl_gate_init=0.05,
+            tdl_alignw=0.1, tdl_warmup_iters=8000, tdl_random_bank=False
 """
 import math
 import os
@@ -35,13 +40,24 @@ from .PARSegLDR import load_desc_asset
 
 class DictionaryLookup(nn.Module):
     """Single-head cross-attention from pixel features to a frozen text
-    dictionary, with a bounded scalar gate (LCR-gate pattern)."""
+    dictionary, with a bounded scalar gate (LCR-gate pattern).
+
+    The most recent attention map is kept on `last_attn` (training only) so
+    the head's loss can supervise retrieval. `random_bank=True` swaps the
+    descriptions for a FIXED random bank of the same shape -- the control
+    run that decides whether the TEXT CONTENT is load-bearing.
+    """
 
     def __init__(self, feat_dim, desc, attn_dim=64, gate_max=0.5,
-                 gate_init=0.05):
+                 gate_init=0.05, random_bank=False):
         super().__init__()
         C, K, E = desc.shape
-        self.register_buffer('bank', desc.reshape(C * K, E))   # [N, E]
+        self.num_classes, self.k_per_class = C, K
+        bank = desc.reshape(C * K, E)
+        if random_bank:
+            g = torch.Generator().manual_seed(3407)
+            bank = F.normalize(torch.randn(C * K, E, generator=g), dim=-1)
+        self.register_buffer('bank', bank)                     # [N, E]
         self.q_proj = nn.Linear(feat_dim, attn_dim, bias=False)
         self.k_proj = nn.Linear(E, attn_dim, bias=False)
         self.v_proj = nn.Linear(E, feat_dim, bias=False)
@@ -53,6 +69,8 @@ class DictionaryLookup(nn.Module):
         ratio = gate_init / gate_max
         self.gate_alpha = nn.Parameter(
             torch.tensor(math.log(ratio / (1.0 - ratio)), dtype=torch.float32))
+        self.last_attn = None
+        self._last_hw = None
 
     def gate(self):
         return self.gate_max * torch.sigmoid(self.gate_alpha)
@@ -63,6 +81,8 @@ class DictionaryLookup(nn.Module):
         k = self.k_proj(self.bank)                             # [N, A]
         v = self.v_proj(self.bank)                             # [N, D]
         attn = torch.softmax(q @ k.t() * self.scale, dim=-1)   # [B, HW, N]
+        self.last_attn = attn if self.training else None
+        self._last_hw = (H, W)
         out = (attn @ v).reshape(B, H, W, D).permute(0, 3, 1, 2)
         return feats + self.gate() * out
 
@@ -114,7 +134,8 @@ class TDLRefinementHead(PrototypeAttributeRefinementHead):
 
 @MODELS.register_module()
 class PARSegTDL(PARSeg3):
-    """PARSeg3 whose refinement features can read a frozen text dictionary."""
+    """PARSeg3 whose refinement features read a frozen text dictionary,
+    with GT-routed retrieval alignment during training."""
 
     def __init__(self, in_channels, new_channels, num_classes, cls_attributes,
                  args=None, **kwargs):
@@ -134,8 +155,6 @@ class PARSegTDL(PARSeg3):
                              'ade20k_clip_vitb32_desc6.pt')),
             num_classes)
 
-        # swap in the enriched refinement head (same ctor signature/params),
-        # then attach the lookup module
         self.prototype_attribute_refinement = TDLRefinementHead(
             in_channels=self.channels,
             num_classes=num_classes,
@@ -152,5 +171,61 @@ class PARSegTDL(PARSeg3):
             attn_dim=int(self.args.get('tdl_attn_dim', 64)),
             gate_max=float(self.args.get('tdl_gate_max', 0.5)),
             gate_init=float(self.args.get('tdl_gate_init', 0.05)),
+            random_bank=bool(self.args.get('tdl_random_bank', False)),
         ))
-    # forward and all losses fully inherited from PARSeg3.
+        self.tdl_alignw = float(self.args.get('tdl_alignw', 0.1))
+        self.tdl_warmup_iters = int(self.args.get('tdl_warmup_iters', 8000))
+        self._tdl_step = 0
+
+    def _tdl_iter(self):
+        try:
+            from mmengine.logging import MessageHub
+            it = MessageHub.get_current_instance().get_info('iter')
+            if it is not None:
+                return int(it)
+        except Exception:
+            pass
+        return self._tdl_step
+
+    # forward fully inherited from PARSeg3; one training-only loss added.
+    def loss_by_feat(self, seg_logits, batch_data_samples):
+        losses = super().loss_by_feat(seg_logits, batch_data_samples)
+        self._tdl_step += 1
+
+        lookup = self.prototype_attribute_refinement.tdl_lookup
+        attn = lookup.last_attn
+        lookup.last_attn = None
+        if attn is None or self.tdl_alignw <= 0:
+            return losses
+
+        seg_label = self._stack_batch_gt(batch_data_samples)
+        if seg_label.dim() == 4:
+            seg_label = seg_label.squeeze(1)                   # [B, H, W]
+        Hf, Wf = lookup._last_hw
+        with torch.no_grad():
+            y = F.interpolate(seg_label.unsqueeze(1).float(), size=(Hf, Wf),
+                              mode='nearest').squeeze(1).long()
+            y = y.reshape(y.shape[0], -1)                      # [B, HW]
+            valid = (y != self.ignore_index) & (y < self.num_classes)
+            y_safe = torch.where(valid, y, torch.zeros_like(y))
+
+        B, HW, N = attn.shape
+        C, K = lookup.num_classes, lookup.k_per_class
+        mass_per_class = attn.reshape(B, HW, C, K).sum(dim=-1)  # [B, HW, C]
+        gt_mass = mass_per_class.gather(
+            2, y_safe.unsqueeze(-1)).squeeze(-1)                # [B, HW]
+
+        vmask = valid.to(gt_mass.dtype)
+        if float(vmask.sum()) < 1.0:
+            losses['loss_tdl_align'] = attn.sum() * 0.0
+            return losses
+
+        align = -(torch.log(gt_mass.clamp_min(1e-6)) * vmask).sum() / vmask.sum()
+        ramp = min(1.0, float(self._tdl_iter()) / max(1, self.tdl_warmup_iters))
+        losses['loss_tdl_align'] = align * self.tdl_alignw * ramp
+        # live monitoring needle: mean attention mass on the GT class's
+        # entries (uniform baseline = 1/150 ~ 0.0067; rising = semantic
+        # retrieval is forming)
+        losses['acc_tdl_gt_mass'] = (
+            (gt_mass * vmask).sum() / vmask.sum()).detach()
+        return losses
