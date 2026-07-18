@@ -2,7 +2,7 @@ _base_ = [
     '../../_base_/models/offseg.py',
     '../../_base_/datasets/coco-stuff164k.py',
     '../../_base_/default_runtime.py', 
-    '../../_base_/schedules/schedule_160k.py',
+    '../../_base_/schedules/schedule_80k.py',
 ]
 norm_cfg = dict(type='SyncBN', requires_grad=True)
 ham_norm_cfg = dict(type='GN', num_groups=32, requires_grad=True)
