@@ -113,6 +113,13 @@ class PARSegTAM(PARSeg3):
                              'ade20k_clip_vitb32_desc6.pt')),
             num_classes)
         desc_mean = F.normalize(desc.mean(dim=1), p=2, dim=-1)  # [C, E]
+        # control switch (tam_use_text=False): zero the text input so the
+        # metric degenerates to w = 1 + s*tanh(r) -- a freely learned
+        # per-class diagonal metric with NO language structure. Decides
+        # whether the language content is load-bearing. Default True keeps
+        # behavior byte-identical to the original TAM.
+        if not bool(self.args.get('tam_use_text', True)):
+            desc_mean = torch.zeros_like(desc_mean)
 
         self.prototype_attribute_refinement = TAMRefinementHead(
             in_channels=self.channels,
