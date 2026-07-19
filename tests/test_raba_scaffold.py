@@ -9,6 +9,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RABA_CONFIG = (REPO_ROOT / 'local_configs' / 'offseg2' / 'Base' /
                'raba_ade20k_160k-512x512.py')
+RABA3_AUX_CONFIG = (REPO_ROOT / 'local_configs' / 'offseg2' / 'Base' /
+                    'raba3_aux_ade20k_160k-512x512.py')
+RABA6_AUX_CONFIG = (REPO_ROOT / 'local_configs' / 'offseg2' / 'Base' /
+                    'raba6_aux_ade20k_160k-512x512.py')
 P3_CONFIG = (REPO_ROOT / 'local_configs' / 'offseg2' / 'Base' /
              'parseg3_ade20k_160k-512x512.py')
 RABA_MODULE = (REPO_ROOT / 'mmseg' / 'models' / 'decode_heads' /
@@ -58,6 +62,8 @@ class TestRABAScaffold(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.raba = _load_config(RABA_CONFIG)
+        cls.raba3_aux = _load_config(RABA3_AUX_CONFIG)
+        cls.raba6_aux = _load_config(RABA6_AUX_CONFIG)
         cls.p3 = _load_config(P3_CONFIG)
 
     def test_keeps_p3_experiment_protocol(self):
@@ -89,6 +95,16 @@ class TestRABAScaffold(unittest.TestCase):
         }
         self.assertEqual(configured_losses,
                          {'loss_cls', 'loss_mask', 'loss_dice'})
+
+    def test_auxiliary_supervision_variants_are_isolated(self):
+        expected_3l = copy.deepcopy(self.raba)
+        expected_3l['model']['decode_head']['final_only_loss'] = False
+        self.assertEqual(self.raba3_aux, expected_3l)
+
+        expected_6l = copy.deepcopy(expected_3l)
+        expected_6l['model']['decode_head']['transformer_decoder'][
+            'num_layers'] = 6
+        self.assertEqual(self.raba6_aux, expected_6l)
 
     def test_has_no_language_or_teacher_dependency(self):
         tree = ast.parse(RABA_MODULE.read_text(encoding='utf-8'))
