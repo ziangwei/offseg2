@@ -60,6 +60,22 @@ def main():
     logits = torch.randn(B, NCLS, H, W, device=dev)
 
     all_ok = True
+    print('0) bias layout (PixelShuffle reads channel = c_out*up^2 + sub)')
+    with torch.no_grad():
+        bias = field.hra2_mlp[-1].bias.view(field.per_pos, up * up)
+    zero_bin = bias[field.num_dir]
+    gate_row = bias[-1]
+    dir_rows = bias[:field.num_dir]
+    all_ok &= _ok('zero-magnitude bin biased on every sub-position',
+                  bool((zero_bin > 1.0).all()),
+                  f'{[round(v, 2) for v in zero_bin.tolist()]}')
+    all_ok &= _ok('gate biased on every sub-position',
+                  bool((gate_row < -1.0).all()),
+                  f'{[round(v, 2) for v in gate_row.tolist()]}')
+    all_ok &= _ok('direction bins left at zero (uniform = no boundary)',
+                  float(dir_rows.abs().max()) < 1e-6,
+                  f'max|b|={float(dir_rows.abs().max()):.1e}')
+
     print('1) identity at init')
     with torch.no_grad():
         guide = stem(image)
@@ -67,9 +83,13 @@ def main():
         up_logits = F.interpolate(logits, size=out_hw, mode='bilinear',
                                   align_corners=False)
         out = _warp(up_logits, flow, gate)
-    all_ok &= _ok('rho ~ 0', rho.abs().max().item() < 1e-2,
-                  f'max|rho|={rho.abs().max().item():.2e} field px')
-    all_ok &= _ok('warp == logits', (out - up_logits).abs().max().item() < 1e-3,
+    # With mag_bias=8 and 3 non-zero bins: p_nonzero = 3/(3+e^8) = 1.0e-3, so
+    # rho ~ 1.0e-3 * mean(non-zero centers) ~ 5e-3 field px. Thresholds keep
+    # ~4x headroom rather than being tightened onto the expected value.
+    all_ok &= _ok('rho ~ 0', rho.abs().max().item() < 2e-2,
+                  f'max|rho|={rho.abs().max().item():.2e} field px '
+                  f'(expect ~5e-3)')
+    all_ok &= _ok('warp == logits', (out - up_logits).abs().max().item() < 5e-3,
                   f'max|d|={(out - up_logits).abs().max().item():.2e}')
     all_ok &= _ok('gate ~ 0.12', abs(gate.mean().item() - 0.119) < 0.02,
                   f'mean={gate.mean().item():.3f}')

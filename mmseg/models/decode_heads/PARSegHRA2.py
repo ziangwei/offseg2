@@ -118,7 +118,7 @@ class _HRA2Field(nn.Module):
     """
 
     def __init__(self, feat_dim: int, guide_dim: int, hidden: int,
-                 up: int, num_dir: int, mag_centers):
+                 up: int, num_dir: int, mag_centers, mag_bias: float = 8.0):
         super().__init__()
         self.up = int(up)
         self.num_dir = int(num_dir)
@@ -147,14 +147,27 @@ class _HRA2Field(nn.Module):
 
         # Identity at step 0: all mass on the zero-magnitude bin, gate ~0.12,
         # direction uniform (the a-contrario null: "no boundary here").
+        #
+        # NOTE on the layout: PixelShuffle reads its input as
+        # (B, per_pos, up, up, H, W), i.e. channel = c_out * up^2 + sub. The
+        # bias must therefore be viewed as (per_pos, up*up) -- viewing it the
+        # other way round biases random direction bins instead of the zero
+        # magnitude bin and leaves 3 of the 4 gate sub-positions at 0.5.
+        #
+        # mag_bias must be large: with 3 non-zero bins, p_nonzero = 3/(3+e^b),
+        # so b=4 still leaves rho ~ 0.24 px. b=8 gives rho ~ 5e-3 px. This
+        # costs nothing in trainability because the field is supervised by a
+        # cross-entropy, whose gradient is (p - y) and therefore does NOT
+        # vanish at a saturated init -- unlike a regression target, which is
+        # exactly why the categorical reparameterization is used here.
         head = self.hra2_mlp[-1]
         nn.init.uniform_(head.weight, -1e-3, 1e-3)
         nn.init.zeros_(head.bias)
         with torch.no_grad():
-            bias = head.bias.view(self.up * self.up, self.per_pos)
-            bias[:, self.num_dir] = 4.0                 # first magnitude bin = 0 px
-            bias[:, -1] = -2.0                          # residual gate
-            head.bias.copy_(bias.view(-1))
+            bias = head.bias.view(self.per_pos, self.up * self.up)
+            bias[self.num_dir, :] = float(mag_bias)     # first magnitude bin = 0 px
+            bias[-1, :] = -2.0                          # residual gate
+            head.bias.copy_(bias.reshape(-1))
 
     def forward(self, feat, guide, out_hw):
         if guide.shape[-2:] != feat.shape[-2:]:
@@ -214,6 +227,7 @@ class PARSegHRA2(PARSeg3):
         hra2_field_stride:field/output stride in image px, 1 or 2 (default 2)
         hra2_num_dir:     direction bins (default 16)
         hra2_mag_px:      magnitude bin centers in IMAGE px (default 0,4,8,16)
+        hra2_mag_bias:    zero-bin bias = strength of the identity (default 8.0)
         hra2_fieldw:      weight of the geometric loss (default 0.2)
         hra2_band:        GT boundary band radius in field px (default 2)
         hra2_interiorw:   weight of the "stay put" target off-boundary (0.1)
@@ -246,7 +260,8 @@ class PARSegHRA2(PARSeg3):
         self.hra2_field = _HRA2Field(
             feat_dim=self.channels, guide_dim=dim, hidden=hidden,
             up=max(1, 4 // self.field_stride), num_dir=self.num_dir,
-            mag_centers=mag_field)
+            mag_centers=mag_field,
+            mag_bias=float(self.args.get('hra2_mag_bias', 8.0)))
 
         self._hra2_image = None
 
