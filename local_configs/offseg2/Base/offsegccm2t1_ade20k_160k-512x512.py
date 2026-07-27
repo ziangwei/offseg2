@@ -1,23 +1,29 @@
-# OffSeg-CCM2 control: capacity only, T=1. From scratch 160k.
+# OffSeg-CCM2 control: capacity only. T=1, rank 192. From scratch 160k.
 #
-# Generation 2 bundles two changes (T 1->3 and rank 64->192) because slots are
-# expensive. This run separates them. With gen 1 already on file the three
-# points read out directly:
+# Single-variable partner of offsegccm2 (which changes only T). Both are read
+# against generation 1, so each effect is a plain subtraction with no
+# confound:
 #
-#   T=1, rank=64    46.8      (generation 1, done)
-#   T=1, rank=192   ?         (this config -- capacity alone)
-#   T=3, rank=192   ?         (offsegccm2 -- capacity + fixed-point iteration)
+#   T=1, rank= 64   4.8G   46.8    generation 1, done
+#   T=3, rank= 64  14.3G   ?       offsegccm2      -> ITERATION effect
+#   T=1, rank=192   7.4G   ?       this config     -> CAPACITY  effect
 #
-#   iteration effect = (T=3,r=192) - (T=1,r=192)
-#   capacity  effect = (T=1,r=192) - (T=1,r=64)
+# What the decomposition decides for generation 3:
+#   iteration carries it -> the fixed-point axis is real; deepen it (larger T,
+#     intermediate supervision, full BPTT) and cut the per-step cost by
+#     computing the gain at stride 8.
+#   capacity carries it  -> the mechanism is simply undersized; scale width,
+#     not depth, and drop the iteration.
+#   neither carries it   -> the single-path conditional metric is finished and
+#     generation 3 has to open a second decision path.
 #
-# That decomposition is what decides generation 3: if iteration carries the
-# gain, the fixed-point axis is real and gets deepened; if capacity carries it,
-# the mechanism is simply undersized and the axis to scale is width, not depth;
-# if neither, the single-path conditional metric is done and gen 3 has to open
-# a second decision path.
-#
-# Identical to offsegccm2 in every other respect.
+# Identical to offsegccm2 in every other respect. ccm_rank is set explicitly
+# here rather than inherited, so that changing the rank in offsegccm2 can
+# never silently turn this control into a duplicate of generation 1.
 _base_ = ['./offsegccm2_ade20k_160k-512x512.py']
 
-model = dict(decode_head=dict(ccm2_steps=1))
+model = dict(
+    decode_head=dict(
+        ccm2_steps=1,
+        ccm_rank=192,
+    ))
