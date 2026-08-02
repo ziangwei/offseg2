@@ -7,6 +7,7 @@
 #SBATCH --mem=64G
 
 # 从仓库根目录提交:  sbatch tools/slurm/ev5_ccm_pce_sfr.sh
+source /dss/dssmcmlfs01/pn39qo/pn39qo-dss-0000/di97fer/miniconda3/etc/profile.d/conda.sh
 conda activate offseg_new2
 
 export PORT=$((29500 + SLURM_JOB_ID % 1000))
