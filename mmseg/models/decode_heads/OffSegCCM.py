@@ -196,19 +196,7 @@ class OffSegCCM(OffSegHead):
 
     def forward(self, inputs):
         inputs = self._transform_inputs(inputs)
-
-        new_inputs = [self.pre[i](inputs[i]) for i in range(len(inputs))]
-        new_inputs = new_inputs[::-1]
-        lowres_feat = new_inputs[0]
-        for hires_feat, freqfusion in zip(new_inputs[1:], self.freqfusions):
-            _, hires_feat, lowres_feat = freqfusion(hr_feat=hires_feat,
-                                                    lr_feat=lowres_feat)
-            b, _, h, w = hires_feat.shape
-            lowres_feat = torch.cat(
-                [hires_feat.reshape(b * 4, -1, h, w),
-                 lowres_feat.reshape(b * 4, -1, h, w)], dim=1).reshape(b, -1, h, w)
-
-        feat_aligned = self.align(lowres_feat)
+        feat_aligned = self._build_feature(inputs)
         masks, e, f, (h, w) = self._offset_learning_parts(feat_aligned)
         b, k, _ = masks.shape
 

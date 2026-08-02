@@ -71,10 +71,14 @@ class OffSegHead(BaseDecodeHead):
         # delattr(self, 'conv_seg')
         self.offset_learning = Offset_Learning(self.num_classes, self.channels)
 
-    def forward(self, inputs):
-        """Forward function."""
-        inputs = self._transform_inputs(inputs)
+    def _build_feature(self, inputs):
+        """Build the stride-4 feature consumed by Offset Learning.
 
+        ``inputs`` are expected to have already passed through
+        ``_transform_inputs``.  Keeping the evidence path in a separate
+        method lets lightweight heads precondition the aligned feature
+        without copying OffSeg's FreqFusion cascade.
+        """
         new_inputs = []
         for i in range(len(inputs)):
             new_inputs.append(self.pre[i](inputs[i]))
@@ -91,6 +95,10 @@ class OffSegHead(BaseDecodeHead):
 
         inputs = lowres_feat
 
-        output = self.align(inputs)
-        output = self.offset_learning(output)
-        return output
+        return self.align(inputs)
+
+    def forward(self, inputs):
+        """Forward function."""
+        inputs = self._transform_inputs(inputs)
+        output = self._build_feature(inputs)
+        return self.offset_learning(output)
