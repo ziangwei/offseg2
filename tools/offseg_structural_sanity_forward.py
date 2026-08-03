@@ -48,10 +48,12 @@ def _load_components():
         spec.loader.exec_module(module)
         loaded[short_name] = module
     return (loaded['OffSegACS'].AffineClassSubspace,
+            loaded['OffSegACS'].ImageAdaptiveAffineClassSubspace,
             loaded['OffSegSRG'].SemanticResidualRegionGraph)
 
 
-AffineClassSubspace, SemanticResidualRegionGraph = _load_components()
+AffineClassSubspace, ImageAdaptiveAffineClassSubspace, \
+    SemanticResidualRegionGraph = _load_components()
 
 
 def check(name, condition, detail=''):
@@ -71,6 +73,11 @@ def main():
     acs = AffineClassSubspace(classes, channels, rank=4, scale_init=0.05)
     correction, scale = acs(feat, centres)
     basis = acs.orthonormal_basis()
+    direct_pixel = torch.einsum('bnc,kcr->bnkr', feat, basis)
+    direct_centre = torch.einsum('bkc,kcr->bkr', centres, basis)
+    direct_energy = (
+        direct_pixel - direct_centre[:, None]).square().sum(dim=-1)
+    direct_correction = 0.5 * direct_energy * scale.view(1, 1, -1)
     gram = torch.einsum('kcr,kcs->krs', basis, basis)
     identity = torch.eye(4).expand_as(gram)
     all_ok &= check('correction shape', correction.shape == (
@@ -81,12 +88,63 @@ def main():
     scale_mean = float(scale.mean().detach())
     all_ok &= check('scale starts positive',
                     bool((scale > 0).all()), f'mean={scale_mean:.4f}')
+    all_ok &= check('refactor is identical to measured ACS formula',
+                    float((correction - direct_correction).abs().max()
+                          .detach()) == 0.0)
     correction.mean().backward()
     all_ok &= check('basis receives gradient at step 0',
                     acs.raw_basis.grad is not None and
                     float(acs.raw_basis.grad.abs().sum()) > 0)
 
-    print('2) semantic residual region graph')
+    print('2) image-adaptive affine class subspace')
+    iacs = ImageAdaptiveAffineClassSubspace(
+        classes, channels, rank=4, scale_init=0.05, mix_init=0.10)
+    logits = torch.randn(batch, length, classes)
+    adaptive, adaptive_scale, mix, anisotropy = iacs(
+        feat.detach(), centres.detach(), logits)
+    projection = iacs.project_residual(feat.detach(), centres.detach())
+    metric, _, _ = iacs.image_metric(projection, logits)
+    metric_trace = metric.diagonal(dim1=-2, dim2=-1).sum(-1)
+    min_eigenvalue = torch.linalg.eigvalsh(metric.float()).min()
+    all_ok &= check('adaptive correction shape',
+                    adaptive.shape == (batch, length, classes),
+                    str(tuple(adaptive.shape)))
+    all_ok &= check('metric keeps trace r',
+                    float((metric_trace - 4).abs().max().detach()) < 1e-4)
+    all_ok &= check('metric is positive definite',
+                    float(min_eigenvalue.detach()) > 0)
+    all_ok &= check('mix initialises as configured',
+                    abs(float(mix.detach()) - 0.10) < 1e-6,
+                    f'mix={float(mix.detach()):.4f}')
+    all_ok &= check('anisotropy is finite and active',
+                    bool(torch.isfinite(anisotropy)) and
+                    float(anisotropy.detach()) > 0)
+    adaptive.mean().backward()
+    all_ok &= check('IACS basis receives gradient',
+                    iacs.raw_basis.grad is not None and
+                    float(iacs.raw_basis.grad.abs().sum()) > 0)
+    all_ok &= check('IACS mix receives gradient',
+                    iacs.mix_logit.grad is not None and
+                    float(iacs.mix_logit.grad.abs()) > 0)
+
+    # Both launch candidates also exercise rank 8.  Keep this tensor tiny so
+    # the standalone CPU check remains cheap.
+    iacs8 = ImageAdaptiveAffineClassSubspace(
+        num_classes=5, embed_dims=32, rank=8,
+        scale_init=0.05, mix_init=0.10)
+    small_feat = torch.randn(1, 9, 32)
+    small_centres = torch.randn(1, 5, 32)
+    small_logits = torch.randn(1, 9, 5)
+    small_correction, _, _, _ = iacs8(
+        small_feat, small_centres, small_logits)
+    basis8 = iacs8.orthonormal_basis()
+    gram8 = torch.einsum('kcr,kcs->krs', basis8, basis8)
+    eye8 = torch.eye(8).expand_as(gram8)
+    all_ok &= check('rank-8 path shape and orthogonality',
+                    small_correction.shape == (1, 9, 5) and
+                    float((gram8 - eye8).abs().max().detach()) < 1e-4)
+
+    print('3) semantic residual region graph')
     residual = torch.randn(batch, channels, height, width,
                            requires_grad=True)
     srg = SemanticResidualRegionGraph(
@@ -112,8 +170,10 @@ def main():
                          torch.isfinite(relation).all()))
 
     n_acs = sum(parameter.numel() for parameter in acs.parameters())
+    n_iacs = sum(parameter.numel() for parameter in iacs.parameters())
     n_srg = sum(parameter.numel() for parameter in srg.parameters())
     print(f'    ACS: {n_acs / 1e6:.3f} M parameters')
+    print(f'   IACS: {n_iacs / 1e6:.3f} M parameters')
     print(f'    SRG: {n_srg / 1e6:.3f} M parameters')
     print('=' * 62)
     print('ALL PASS' if all_ok else 'SOMETHING FAILED -- do not launch')
