@@ -22,6 +22,22 @@ from mmseg.registry import MODELS
 from .OffSegCCM import OffSegCCM
 
 
+def restrict_correction_to_topk(correction, ccm_logits, topk):
+    """Keep a correction only on CCM's detached per-pixel top-k classes.
+
+    The base CCM score is never masked.  This function only controls which
+    classes receive the non-negative affine-subspace bonus.
+    """
+    topk = int(topk)
+    if topk <= 0 or topk >= correction.shape[-1]:
+        return correction
+    if correction.shape != ccm_logits.shape:
+        raise ValueError('correction and ccm_logits must have equal shapes')
+    indices = ccm_logits.detach().topk(topk, dim=-1).indices
+    selected = correction.gather(-1, indices)
+    return torch.zeros_like(correction).scatter(-1, indices, selected)
+
+
 class AffineClassSubspace(nn.Module):
     """Class-specific orthonormal tangent bases and projection-energy score."""
 
@@ -97,7 +113,8 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
     def __init__(self, num_classes: int, embed_dims: int, rank: int = 4,
                  scale_init: float = 0.05, mix_init: float = 0.10,
                  scatter_eps: float = 1e-4,
-                 detach_statistics: bool = True, eps: float = 1e-6):
+                 detach_statistics: bool = True,
+                 classwise_mix: bool = False, eps: float = 1e-6):
         super().__init__(num_classes=num_classes, embed_dims=embed_dims,
                          rank=rank, scale_init=scale_init, eps=eps)
         if not 0 < mix_init < 1:
@@ -106,8 +123,10 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
             raise ValueError('scatter_eps must be positive')
         self.scatter_eps = float(scatter_eps)
         self.detach_statistics = bool(detach_statistics)
+        self.classwise_mix = bool(classwise_mix)
         mix_logit = math.log(float(mix_init) / (1.0 - float(mix_init)))
-        self.mix_logit = nn.Parameter(torch.tensor(mix_logit))
+        mix_shape = (self.num_classes,) if self.classwise_mix else ()
+        self.mix_logit = nn.Parameter(torch.full(mix_shape, mix_logit))
 
     def image_metric(self, projection, ccm_logits):
         """Estimate trace-normalised residual scatter [B,K,r,r]."""
@@ -142,7 +161,9 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
         ) / (trace[..., None, None] + self.scatter_eps)
 
         mix = torch.sigmoid(self.mix_logit)
-        metric = (1.0 - mix) * identity + mix * normalised
+        metric_mix = (mix.view(1, self.num_classes, 1, 1)
+                      if self.classwise_mix else mix)
+        metric = (1.0 - metric_mix) * identity + metric_mix * normalised
         anisotropy = (normalised - identity).square().mean().sqrt()
         return metric, mix, anisotropy
 
@@ -220,7 +241,9 @@ class OffSegCCMIACS(OffSegCCMACS):
     def __init__(self, in_channels, new_channels, num_classes,
                  acs_rank=4, acs_scale_init=0.05,
                  iacs_mix_init=0.10, iacs_scatter_eps=1e-4,
-                 iacs_detach_statistics=True, **kwargs):
+                 iacs_detach_statistics=True,
+                 iacs_candidate_topk=0, iacs_classwise_mix=False,
+                 **kwargs):
         super().__init__(
             in_channels=in_channels,
             new_channels=new_channels,
@@ -228,6 +251,9 @@ class OffSegCCMIACS(OffSegCCMACS):
             acs_rank=acs_rank,
             acs_scale_init=acs_scale_init,
             **kwargs)
+        self.iacs_candidate_topk = int(iacs_candidate_topk)
+        if self.iacs_candidate_topk < 0:
+            raise ValueError('iacs_candidate_topk must be non-negative')
         # Replace static ACS with its image-adaptive extension.  There is only
         # one subspace scorer in the resulting module tree.
         self.acs = ImageAdaptiveAffineClassSubspace(
@@ -237,20 +263,33 @@ class OffSegCCMIACS(OffSegCCMACS):
             scale_init=float(acs_scale_init),
             mix_init=float(iacs_mix_init),
             scatter_eps=float(iacs_scatter_eps),
-            detach_statistics=bool(iacs_detach_statistics))
+            detach_statistics=bool(iacs_detach_statistics),
+            classwise_mix=bool(iacs_classwise_mix))
 
     def _subspace_correction(self, metric_feat, centres, ccm_logits):
-        correction, scale, mix, anisotropy = self.acs(
+        raw_correction, scale, mix, anisotropy = self.acs(
             metric_feat, centres, ccm_logits)
+        correction = restrict_correction_to_topk(
+            raw_correction, ccm_logits, self.iacs_candidate_topk)
         return correction, dict(
             acs_scale=scale,
             acs_correction=correction,
             iacs_mix=mix,
-            iacs_anisotropy=anisotropy)
+            iacs_anisotropy=anisotropy,
+            iacs_raw_move=raw_correction.detach().abs().mean())
 
     def loss_by_feat(self, seg_logits, batch_data_samples):
         losses = super().loss_by_feat(seg_logits, batch_data_samples)
-        losses['acc_iacs_mix'] = seg_logits['iacs_mix'].detach()
+        mix = seg_logits['iacs_mix'].detach().flatten()
+        losses['acc_iacs_mix'] = mix.mean()
+        losses['acc_iacs_mix_std'] = mix.std(unbiased=False)
+        losses['acc_iacs_mix_min'] = mix.min()
+        losses['acc_iacs_mix_max'] = mix.max()
         losses['acc_iacs_anisotropy'] = (
             seg_logits['iacs_anisotropy'].detach())
+        raw_move = seg_logits['iacs_raw_move'].detach()
+        applied_move = seg_logits['acs_correction'].detach().abs().mean()
+        losses['acc_iacs_raw_move'] = raw_move
+        losses['acc_iacs_keep_ratio'] = (
+            applied_move / raw_move.clamp_min(1e-8))
         return losses

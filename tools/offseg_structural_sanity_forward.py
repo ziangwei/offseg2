@@ -47,12 +47,14 @@ def _load_components():
         sys.modules[qualified] = module
         spec.loader.exec_module(module)
         loaded[short_name] = module
-    return (loaded['OffSegACS'].AffineClassSubspace,
+    return (loaded['OffSegACS'].restrict_correction_to_topk,
+            loaded['OffSegACS'].AffineClassSubspace,
             loaded['OffSegACS'].ImageAdaptiveAffineClassSubspace,
             loaded['OffSegSRG'].SemanticResidualRegionGraph)
 
 
-AffineClassSubspace, ImageAdaptiveAffineClassSubspace, \
+restrict_correction_to_topk, AffineClassSubspace, \
+    ImageAdaptiveAffineClassSubspace, \
     SemanticResidualRegionGraph = _load_components()
 
 
@@ -127,6 +129,40 @@ def main():
                     iacs.mix_logit.grad is not None and
                     float(iacs.mix_logit.grad.abs()) > 0)
 
+    print('3) competition restriction and class-wise mix')
+    candidate_logits = torch.randn(batch, length, classes)
+    raw_correction = torch.randn(
+        batch, length, classes, requires_grad=True)
+    restricted = restrict_correction_to_topk(
+        raw_correction, candidate_logits, topk=3)
+    top3 = candidate_logits.topk(3, dim=-1).indices
+    selected = raw_correction.gather(-1, top3)
+    selected_after = restricted.gather(-1, top3)
+    nonzero = (restricted.detach() != 0).sum(dim=-1)
+    all_ok &= check('exactly three corrections survive per pixel',
+                    bool((nonzero == 3).all()))
+    all_ok &= check('selected correction values are unchanged',
+                    float((selected - selected_after).abs().max().detach())
+                    == 0.0)
+    restricted.sum().backward()
+    grad_selected = raw_correction.grad.gather(-1, top3)
+    all_ok &= check('gradient survives only on selected classes',
+                    bool((grad_selected == 1).all()) and
+                    int((raw_correction.grad != 0).sum()) == top3.numel())
+
+    classmix = ImageAdaptiveAffineClassSubspace(
+        classes, channels, rank=4, scale_init=0.05, mix_init=0.90,
+        classwise_mix=True)
+    class_adaptive, _, class_mix, _ = classmix(
+        feat.detach(), centres.detach(), logits)
+    all_ok &= check('class-wise mix shape and initial value',
+                    class_mix.shape == (classes,) and
+                    float((class_mix - 0.9).abs().max().detach()) < 1e-6)
+    class_adaptive.mean().backward()
+    all_ok &= check('all class-wise mix values receive gradient',
+                    classmix.mix_logit.grad is not None and
+                    bool((classmix.mix_logit.grad != 0).all()))
+
     # Both launch candidates also exercise rank 8.  Keep this tensor tiny so
     # the standalone CPU check remains cheap.
     iacs8 = ImageAdaptiveAffineClassSubspace(
@@ -144,7 +180,7 @@ def main():
                     small_correction.shape == (1, 9, 5) and
                     float((gram8 - eye8).abs().max().detach()) < 1e-4)
 
-    print('3) semantic residual region graph')
+    print('4) semantic residual region graph')
     residual = torch.randn(batch, channels, height, width,
                            requires_grad=True)
     srg = SemanticResidualRegionGraph(
