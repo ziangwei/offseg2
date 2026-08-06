@@ -114,7 +114,10 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
                  scale_init: float = 0.05, mix_init: float = 0.10,
                  scatter_eps: float = 1e-4,
                  detach_statistics: bool = True,
-                 classwise_mix: bool = False, eps: float = 1e-6):
+                 classwise_mix: bool = False,
+                 center_statistics: bool = False,
+                 assignment: str = 'spatial',
+                 reliability_shrink: bool = False, eps: float = 1e-6):
         super().__init__(num_classes=num_classes, embed_dims=embed_dims,
                          rank=rank, scale_init=scale_init, eps=eps)
         if not 0 < mix_init < 1:
@@ -124,12 +127,52 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
         self.scatter_eps = float(scatter_eps)
         self.detach_statistics = bool(detach_statistics)
         self.classwise_mix = bool(classwise_mix)
+        self.center_statistics = bool(center_statistics)
+        if assignment not in ('spatial', 'posterior'):
+            raise ValueError(
+                "assignment must be either 'spatial' or 'posterior'")
+        self.assignment = assignment
+        self.reliability_shrink = bool(reliability_shrink)
+        if self.reliability_shrink and self.assignment != 'posterior':
+            raise ValueError(
+                'reliability_shrink requires posterior assignment')
         mix_logit = math.log(float(mix_init) / (1.0 - float(mix_init)))
         mix_shape = (self.num_classes,) if self.classwise_mix else ()
         self.mix_logit = nn.Parameter(torch.full(mix_shape, mix_logit))
 
+    def assignment_statistics(self, ccm_logits):
+        """Return spatial weights and posterior spatial reliability.
+
+        ``spatial`` reproduces the measured IACS estimator. ``posterior``
+        first computes mutually competitive class responsibilities at every
+        pixel, then normalises each class over the image for moment pooling.
+        """
+        if self.assignment == 'spatial':
+            spatial_weight = torch.softmax(ccm_logits, dim=1)
+            reliability = ccm_logits.new_ones(
+                ccm_logits.shape[0], ccm_logits.shape[2])
+            assignment_tv = ccm_logits.new_zeros(())
+            return spatial_weight, reliability, assignment_tv
+        posterior = torch.softmax(ccm_logits, dim=2)
+        normaliser = posterior.sum(dim=1, keepdim=True).clamp_min(self.eps)
+        spatial_weight = posterior / normaliser
+        spatial_reference = torch.softmax(ccm_logits, dim=1)
+        assignment_tv = 0.5 * (
+            spatial_weight - spatial_reference).abs().sum(dim=1).mean()
+
+        # Expected posterior confidence under the class's own responsibility:
+        # rho_c = sum_i p_ic^2 / sum_i p_ic = sum_i w_ic p_ic.
+        # It is neutral to support area when confidence on that support is
+        # fixed, and introduces no threshold or learnable parameter.
+        reliability = (spatial_weight * posterior).sum(dim=1).clamp(0.0, 1.0)
+        return spatial_weight, reliability, assignment_tv
+
+    def assignment_weights(self, ccm_logits):
+        """Compatibility helper returning only per-class spatial weights."""
+        return self.assignment_statistics(ccm_logits)[0]
+
     def image_metric(self, projection, ccm_logits):
-        """Estimate trace-normalised residual scatter [B,K,r,r]."""
+        """Estimate a trace-normalised residual metric [B,K,r,r]."""
         shapes_match = (
             ccm_logits.shape[:2] == projection.shape[:2] and
             ccm_logits.shape[2] == projection.shape[2])
@@ -137,17 +180,32 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
             raise ValueError(
                 'ccm_logits must have shape [B,HW,K] matching projection')
 
-        # Per-class spatial assignment supplied by CCM's final belief.
-        spatial_weight = torch.softmax(ccm_logits, dim=1)          # [B,N,K]
-        stats_projection = projection
         if self.detach_statistics:
-            spatial_weight = spatial_weight.detach()
-            stats_projection = stats_projection.detach()
+            with torch.no_grad():
+                spatial_weight, reliability, assignment_tv = (
+                    self.assignment_statistics(ccm_logits))       # [B,N,K]
+            stats_projection = projection.detach()
+        else:
+            spatial_weight, reliability, assignment_tv = (
+                self.assignment_statistics(ccm_logits))           # [B,N,K]
+            stats_projection = projection
 
-        # Pool q q^T without materialising [B,N,K,r,r].
+        # Pool the first and second moments without materialising
+        # [B,N,K,r,r].  Centering makes the metric invariant to a common
+        # residual translation and prevents OffSeg's first-order offset from
+        # being counted again as second-order class shape.
         q = stats_projection.permute(0, 2, 1, 3)                   # [B,K,N,r]
         weight = spatial_weight.permute(0, 2, 1).unsqueeze(-1)
-        weighted_q = q * weight.clamp_min(0).sqrt()
+        if self.center_statistics:
+            residual_mean = (q * weight).sum(dim=2, keepdim=True)
+            scatter_q = q - residual_mean
+            residual_mean_norm = residual_mean.norm(dim=-1).mean()
+        else:
+            # Preserve the measured IACS q*q^T path without an extra
+            # [B,K,N,r] multiply/reduction when centering is disabled.
+            scatter_q = q
+            residual_mean_norm = q.new_zeros(())
+        weighted_q = scatter_q * weight.clamp_min(0).sqrt()
         scatter = weighted_q.transpose(-1, -2) @ weighted_q        # [B,K,r,r]
 
         identity = torch.eye(
@@ -163,20 +221,32 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
         mix = torch.sigmoid(self.mix_logit)
         metric_mix = (mix.view(1, self.num_classes, 1, 1)
                       if self.classwise_mix else mix)
+        if self.reliability_shrink:
+            metric_mix = metric_mix * reliability[..., None, None]
         metric = (1.0 - metric_mix) * identity + metric_mix * normalised
         anisotropy = (normalised - identity).square().mean().sqrt()
-        return metric, mix, anisotropy
+        effective_support = weight.squeeze(-1).square().sum(
+            dim=2).clamp_min(self.eps).reciprocal()
+        statistics = dict(
+            iacs_residual_mean=residual_mean_norm,
+            iacs_effective_support=effective_support.mean(),
+            iacs_reliability=reliability.mean(),
+            iacs_reliability_min=reliability.min(),
+            iacs_reliability_max=reliability.max(),
+            iacs_assignment_tv=assignment_tv,
+        )
+        return metric, mix, anisotropy, statistics
 
     def forward(self, feat, cls_repr, ccm_logits):
         projection = self.project_residual(feat, cls_repr)
-        metric, mix, anisotropy = self.image_metric(
+        metric, mix, anisotropy, statistics = self.image_metric(
             projection, ccm_logits)
 
         q = projection.permute(0, 2, 1, 3)                         # [B,K,N,r]
         energy = (q * (q @ metric)).sum(dim=-1).permute(0, 2, 1)
         scale = F.softplus(self.log_scale)
         correction = 0.5 * energy * scale.view(1, 1, -1)
-        return correction, scale, mix, anisotropy
+        return correction, scale, mix, anisotropy, statistics
 
 
 @MODELS.register_module()
@@ -243,6 +313,9 @@ class OffSegCCMIACS(OffSegCCMACS):
                  iacs_mix_init=0.10, iacs_scatter_eps=1e-4,
                  iacs_detach_statistics=True,
                  iacs_candidate_topk=0, iacs_classwise_mix=False,
+                 iacs_center_statistics=False,
+                 iacs_assignment='spatial',
+                 iacs_reliability_shrink=False,
                  **kwargs):
         super().__init__(
             in_channels=in_channels,
@@ -264,10 +337,13 @@ class OffSegCCMIACS(OffSegCCMACS):
             mix_init=float(iacs_mix_init),
             scatter_eps=float(iacs_scatter_eps),
             detach_statistics=bool(iacs_detach_statistics),
-            classwise_mix=bool(iacs_classwise_mix))
+            classwise_mix=bool(iacs_classwise_mix),
+            center_statistics=bool(iacs_center_statistics),
+            assignment=iacs_assignment,
+            reliability_shrink=bool(iacs_reliability_shrink))
 
     def _subspace_correction(self, metric_feat, centres, ccm_logits):
-        raw_correction, scale, mix, anisotropy = self.acs(
+        raw_correction, scale, mix, anisotropy, statistics = self.acs(
             metric_feat, centres, ccm_logits)
         correction = restrict_correction_to_topk(
             raw_correction, ccm_logits, self.iacs_candidate_topk)
@@ -276,7 +352,8 @@ class OffSegCCMIACS(OffSegCCMACS):
             acs_correction=correction,
             iacs_mix=mix,
             iacs_anisotropy=anisotropy,
-            iacs_raw_move=raw_correction.detach().abs().mean())
+            iacs_raw_move=raw_correction.detach().abs().mean(),
+            **statistics)
 
     def loss_by_feat(self, seg_logits, batch_data_samples):
         losses = super().loss_by_feat(seg_logits, batch_data_samples)
@@ -287,6 +364,18 @@ class OffSegCCMIACS(OffSegCCMACS):
         losses['acc_iacs_mix_max'] = mix.max()
         losses['acc_iacs_anisotropy'] = (
             seg_logits['iacs_anisotropy'].detach())
+        losses['acc_iacs_residual_mean'] = (
+            seg_logits['iacs_residual_mean'].detach())
+        losses['acc_iacs_effective_support'] = (
+            seg_logits['iacs_effective_support'].detach())
+        losses['acc_iacs_reliability'] = (
+            seg_logits['iacs_reliability'].detach())
+        losses['acc_iacs_reliability_min'] = (
+            seg_logits['iacs_reliability_min'].detach())
+        losses['acc_iacs_reliability_max'] = (
+            seg_logits['iacs_reliability_max'].detach())
+        losses['acc_iacs_assignment_tv'] = (
+            seg_logits['iacs_assignment_tv'].detach())
         raw_move = seg_logits['iacs_raw_move'].detach()
         applied_move = seg_logits['acs_correction'].detach().abs().mean()
         losses['acc_iacs_raw_move'] = raw_move

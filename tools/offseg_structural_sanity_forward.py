@@ -102,12 +102,27 @@ def main():
     iacs = ImageAdaptiveAffineClassSubspace(
         classes, channels, rank=4, scale_init=0.05, mix_init=0.10)
     logits = torch.randn(batch, length, classes)
-    adaptive, adaptive_scale, mix, anisotropy = iacs(
+    adaptive, adaptive_scale, mix, anisotropy, statistics = iacs(
         feat.detach(), centres.detach(), logits)
     projection = iacs.project_residual(feat.detach(), centres.detach())
-    metric, _, _ = iacs.image_metric(projection, logits)
+    metric, _, _, _ = iacs.image_metric(projection, logits)
     metric_trace = metric.diagonal(dim1=-2, dim2=-1).sum(-1)
     min_eigenvalue = torch.linalg.eigvalsh(metric.float()).min()
+    default_weight = torch.softmax(logits, dim=1)
+    default_q = projection.detach().permute(0, 2, 1, 3)
+    default_sqrt_weight = default_weight.permute(
+        0, 2, 1).unsqueeze(-1).sqrt()
+    default_scatter = (
+        default_q * default_sqrt_weight).transpose(-1, -2) @ (
+            default_q * default_sqrt_weight)
+    default_identity = torch.eye(4).view(1, 1, 4, 4)
+    default_trace = default_scatter.diagonal(
+        dim1=-2, dim2=-1).sum(-1)
+    default_normalised = (
+        4 * default_scatter + iacs.scatter_eps * default_identity
+    ) / (default_trace[..., None, None] + iacs.scatter_eps)
+    default_metric = ((1 - mix) * default_identity +
+                      mix * default_normalised)
     all_ok &= check('adaptive correction shape',
                     adaptive.shape == (batch, length, classes),
                     str(tuple(adaptive.shape)))
@@ -115,12 +130,18 @@ def main():
                     float((metric_trace - 4).abs().max().detach()) < 1e-4)
     all_ok &= check('metric is positive definite',
                     float(min_eigenvalue.detach()) > 0)
+    all_ok &= check('default estimator remains bitwise-equivalent',
+                    float((metric - default_metric).abs().max().detach())
+                    == 0.0)
     all_ok &= check('mix initialises as configured',
                     abs(float(mix.detach()) - 0.10) < 1e-6,
                     f'mix={float(mix.detach()):.4f}')
     all_ok &= check('anisotropy is finite and active',
                     bool(torch.isfinite(anisotropy)) and
                     float(anisotropy.detach()) > 0)
+    all_ok &= check('moment diagnostics are finite',
+                    all(torch.isfinite(value) for value in
+                        statistics.values()))
     adaptive.mean().backward()
     all_ok &= check('IACS basis receives gradient',
                     iacs.raw_basis.grad is not None and
@@ -153,7 +174,7 @@ def main():
     classmix = ImageAdaptiveAffineClassSubspace(
         classes, channels, rank=4, scale_init=0.05, mix_init=0.90,
         classwise_mix=True)
-    class_adaptive, _, class_mix, _ = classmix(
+    class_adaptive, _, class_mix, _, _ = classmix(
         feat.detach(), centres.detach(), logits)
     all_ok &= check('class-wise mix shape and initial value',
                     class_mix.shape == (classes,) and
@@ -171,7 +192,7 @@ def main():
     small_feat = torch.randn(1, 9, 32)
     small_centres = torch.randn(1, 5, 32)
     small_logits = torch.randn(1, 9, 5)
-    small_correction, _, _, _ = iacs8(
+    small_correction, _, _, _, _ = iacs8(
         small_feat, small_centres, small_logits)
     basis8 = iacs8.orthonormal_basis()
     gram8 = torch.einsum('kcr,kcs->krs', basis8, basis8)
@@ -180,7 +201,108 @@ def main():
                     small_correction.shape == (1, 9, 5) and
                     float((gram8 - eye8).abs().max().detach()) < 1e-4)
 
-    print('4) semantic residual region graph')
+    print('4) centered and responsibility moment estimators')
+    moment_projection = torch.randn(2, 17, 5, 4)
+    moment_logits = torch.randn(2, 17, 5)
+    residual_shift = torch.randn(2, 1, 5, 4)
+    centered = ImageAdaptiveAffineClassSubspace(
+        num_classes=5, embed_dims=32, rank=4,
+        center_statistics=True)
+    centered_metric, _, _, _ = centered.image_metric(
+        moment_projection, moment_logits)
+    shifted_metric, _, _, _ = centered.image_metric(
+        moment_projection + residual_shift, moment_logits)
+    all_ok &= check('centered covariance is translation invariant',
+                    float((centered_metric - shifted_metric).abs().max()
+                          .detach())
+                    < 1e-5)
+
+    responsibility = ImageAdaptiveAffineClassSubspace(
+        num_classes=5, embed_dims=32, rank=4,
+        assignment='posterior')
+    responsibility_weight = responsibility.assignment_weights(moment_logits)
+    all_ok &= check('responsibilities normalise over space per class',
+                    float((responsibility_weight.sum(dim=1) - 1).abs().max())
+                    < 1e-6)
+    class_bias = torch.linspace(-2, 2, 5).view(1, 1, 5)
+    posterior_shift = responsibility.assignment_weights(
+        moment_logits + class_bias)
+    spatial_shift = centered.assignment_weights(moment_logits + class_bias)
+    spatial_base = centered.assignment_weights(moment_logits)
+    all_ok &= check('posterior assignment retains class competition',
+                    float((posterior_shift - responsibility_weight).abs()
+                          .max()) > 1e-4 and
+                    float((spatial_shift - spatial_base).abs().max())
+                    < 1e-7)
+
+    combined = ImageAdaptiveAffineClassSubspace(
+        num_classes=5, embed_dims=32, rank=4,
+        center_statistics=True, assignment='posterior')
+    combined_metric, _, _, combined_statistics = combined.image_metric(
+        moment_projection, moment_logits)
+    combined_trace = combined_metric.diagonal(
+        dim1=-2, dim2=-1).sum(-1)
+    combined_min_eigenvalue = torch.linalg.eigvalsh(
+        combined_metric.float()).min()
+    all_ok &= check('combined metric stays trace-normalised and PD',
+                    float((combined_trace - 4).abs().max().detach())
+                    < 1e-4 and
+                    float(combined_min_eigenvalue.detach()) > 0 and
+                    all(torch.isfinite(value) for value in
+                        combined_statistics.values()))
+
+    reliable = ImageAdaptiveAffineClassSubspace(
+        num_classes=5, embed_dims=32, rank=4,
+        center_statistics=True, assignment='posterior',
+        reliability_shrink=True)
+    constant_logits = torch.zeros_like(moment_logits)
+    constant_metric, _, _, constant_statistics = reliable.image_metric(
+        moment_projection, constant_logits)
+    constant_unshrunk, _, _, _ = combined.image_metric(
+        moment_projection, constant_logits)
+    moment_identity = torch.eye(4).view(1, 1, 4, 4)
+    constant_expected = moment_identity + 0.2 * (
+        constant_unshrunk - moment_identity)
+    all_ok &= check('uniform posterior uses its self-confidence',
+                    float((constant_metric - constant_expected).abs().max()
+                          .detach()) < 1e-6 and
+                    abs(float(constant_statistics[
+                        'iacs_reliability'].detach()) - 0.2) < 1e-6)
+
+    random_posterior = torch.softmax(moment_logits, dim=2)
+    manual_reliability = (
+        random_posterior.square().sum(dim=1) /
+        random_posterior.sum(dim=1))
+    _, measured_reliability, _ = reliable.assignment_statistics(
+        moment_logits)
+    all_ok &= check('reliability equals posterior self-confidence',
+                    float((manual_reliability - measured_reliability).abs()
+                          .max().detach()) < 1e-6)
+
+    labels = torch.arange(17).remainder(5).view(1, 17, 1).expand(2, -1, -1)
+    certain_logits = torch.full_like(moment_logits, -8.0)
+    certain_logits.scatter_(2, labels, 8.0)
+    _, certain_reliability, _ = reliable.assignment_statistics(
+        certain_logits)
+    all_ok &= check('coherent posterior enables adaptive covariance',
+                    float(certain_reliability.min().detach()) > 0.99)
+    reliable_feat = torch.randn(2, 17, 32)
+    reliable_centres = torch.randn(2, 5, 32)
+    reliable_correction, _, _, _, _ = reliable(
+        reliable_feat, reliable_centres, certain_logits)
+    reliable_correction.mean().backward()
+    all_ok &= check('reliable full path trains basis and mixture',
+                    reliable.raw_basis.grad is not None and
+                    float(reliable.raw_basis.grad.abs().sum()) > 0 and
+                    reliable.mix_logit.grad is not None and
+                    float(reliable.mix_logit.grad.abs()) > 0)
+    all_ok &= check('all moment variants add zero parameters',
+                    sum(parameter.numel() for parameter in
+                        reliable.parameters()) ==
+                    sum(parameter.numel() for parameter in
+                        centered.parameters()))
+
+    print('5) semantic residual region graph')
     residual = torch.randn(batch, channels, height, width,
                            requires_grad=True)
     srg = SemanticResidualRegionGraph(
