@@ -150,7 +150,59 @@ def main():
                     iacs.mix_logit.grad is not None and
                     float(iacs.mix_logit.grad.abs()) > 0)
 
-    print('3) competition restriction and class-wise mix')
+    print('3) persistent class spectrum')
+    spectral_reference = ImageAdaptiveAffineClassSubspace(
+        num_classes=5, embed_dims=32, rank=4,
+        scale_init=0.05, mix_init=0.10)
+    spectral = ImageAdaptiveAffineClassSubspace(
+        num_classes=5, embed_dims=32, rank=4,
+        scale_init=0.05, mix_init=0.10,
+        persistent_spectrum=True, spectrum_scale=0.5)
+    load_result = spectral.load_state_dict(
+        spectral_reference.state_dict(), strict=False)
+    spectral_feat = torch.randn(2, 17, 32)
+    spectral_centres = torch.randn(2, 5, 32)
+    spectral_logits = torch.randn(2, 17, 5)
+    reference_correction, _, _, _, _ = spectral_reference(
+        spectral_feat, spectral_centres, spectral_logits)
+    spectral_correction, _, _, _, spectrum_statistics = spectral(
+        spectral_feat, spectral_centres, spectral_logits)
+    all_ok &= check('spectrum adds exactly K*r parameters',
+                    sum(p.numel() for p in spectral.parameters()) -
+                    sum(p.numel() for p in
+                        spectral_reference.parameters()) == 5 * 4)
+    all_ok &= check('unit spectrum is exact IACS identity',
+                    load_result.missing_keys == ['spectrum_raw'] and
+                    not load_result.unexpected_keys and
+                    float((spectral_correction - reference_correction)
+                          .abs().max().detach()) == 0.0)
+    all_ok &= check('initial spectrum diagnostics are neutral',
+                    float(spectrum_statistics[
+                        'iacs_spectrum_std'].detach()) == 0.0 and
+                    float(spectrum_statistics[
+                        'iacs_spectrum_min'].detach()) == 1.0 and
+                    float(spectrum_statistics[
+                        'iacs_spectrum_max'].detach()) == 1.0)
+    spectral_correction.mean().backward()
+    all_ok &= check('spectrum receives gradient at identity start',
+                    spectral.spectrum_raw.grad is not None and
+                    float(spectral.spectrum_raw.grad.abs().sum()) > 0)
+    with torch.no_grad():
+        spectral.spectrum_raw[0] = torch.tensor(
+            [1.0, -1.0, 0.5, -0.5])
+    moved_spectrum = spectral.direction_spectrum()
+    moved_correction, _, _, _, _ = spectral(
+        spectral_feat, spectral_centres, spectral_logits)
+    all_ok &= check('learned spectrum stays positive and unit-mean',
+                    bool((moved_spectrum > 0).all()) and
+                    float((moved_spectrum.mean(dim=-1) - 1).abs().max()
+                          .detach())
+                    < 1e-6)
+    all_ok &= check('non-uniform spectrum changes the same scorer',
+                    float((moved_correction - reference_correction)
+                          .abs().max().detach()) > 1e-6)
+
+    print('4) competition restriction and class-wise mix')
     candidate_logits = torch.randn(batch, length, classes)
     raw_correction = torch.randn(
         batch, length, classes, requires_grad=True)
@@ -201,7 +253,7 @@ def main():
                     small_correction.shape == (1, 9, 5) and
                     float((gram8 - eye8).abs().max().detach()) < 1e-4)
 
-    print('4) centered and responsibility moment estimators')
+    print('5) centered and responsibility moment estimators')
     moment_projection = torch.randn(2, 17, 5, 4)
     moment_logits = torch.randn(2, 17, 5)
     residual_shift = torch.randn(2, 1, 5, 4)
@@ -302,7 +354,7 @@ def main():
                     sum(parameter.numel() for parameter in
                         centered.parameters()))
 
-    print('5) semantic residual region graph')
+    print('6) semantic residual region graph')
     residual = torch.randn(batch, channels, height, width,
                            requires_grad=True)
     srg = SemanticResidualRegionGraph(

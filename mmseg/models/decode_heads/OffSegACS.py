@@ -105,9 +105,10 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
 
     CCM logits select the pixels currently assigned to each class.  Their
     projected residual scatter defines an image-specific positive-definite
-    metric in the learned class subspace.  The statistic is detached by
-    default: it conditions the decision but cannot be gamed through the
-    posterior/scatter estimation path.
+    metric in the learned class subspace.  An optional unit-mean class
+    spectrum adds persistent direction importance inside the same metric.
+    The image statistic is detached by default: it conditions the decision
+    but cannot be gamed through the posterior/scatter estimation path.
     """
 
     def __init__(self, num_classes: int, embed_dims: int, rank: int = 4,
@@ -117,7 +118,9 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
                  classwise_mix: bool = False,
                  center_statistics: bool = False,
                  assignment: str = 'spatial',
-                 reliability_shrink: bool = False, eps: float = 1e-6):
+                 reliability_shrink: bool = False,
+                 persistent_spectrum: bool = False,
+                 spectrum_scale: float = 0.5, eps: float = 1e-6):
         super().__init__(num_classes=num_classes, embed_dims=embed_dims,
                          rank=rank, scale_init=scale_init, eps=eps)
         if not 0 < mix_init < 1:
@@ -136,9 +139,28 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
         if self.reliability_shrink and self.assignment != 'posterior':
             raise ValueError(
                 'reliability_shrink requires posterior assignment')
+        if not 0 < spectrum_scale < 1:
+            raise ValueError('spectrum_scale must be in (0, 1)')
+        self.spectrum_scale = float(spectrum_scale)
+        if persistent_spectrum:
+            # A bounded positive curvature for every class/subspace axis.
+            # Zero is exactly isotropic, so this option starts as plain IACS.
+            self.spectrum_raw = nn.Parameter(torch.zeros(
+                self.num_classes, self.rank))
+        else:
+            self.register_parameter('spectrum_raw', None)
         mix_logit = math.log(float(mix_init) / (1.0 - float(mix_init)))
         mix_shape = (self.num_classes,) if self.classwise_mix else ()
         self.mix_logit = nn.Parameter(torch.full(mix_shape, mix_logit))
+
+    def direction_spectrum(self):
+        """Return a positive, unit-mean curvature spectrum [K,r]."""
+        if self.spectrum_raw is None:
+            return self.raw_basis.new_ones(self.num_classes, self.rank)
+        spectrum = 1.0 + self.spectrum_scale * torch.tanh(
+            self.spectrum_raw)
+        return spectrum / spectrum.mean(dim=-1, keepdim=True).clamp_min(
+            self.eps)
 
     def assignment_statistics(self, ccm_logits):
         """Return spatial weights and posterior spatial reliability.
@@ -243,7 +265,23 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
             projection, ccm_logits)
 
         q = projection.permute(0, 2, 1, 3)                         # [B,K,N,r]
-        energy = (q * (q @ metric)).sum(dim=-1).permute(0, 2, 1)
+        if self.spectrum_raw is None:
+            energy = (q * (q @ metric)).sum(dim=-1)
+            spectrum = self.direction_spectrum()
+        else:
+            # The persistent class spectrum and the per-image metric act on
+            # the same rank-r coordinates; this is one quadratic scorer, not
+            # an additional prediction branch.
+            spectrum = self.direction_spectrum()
+            sqrt_spectrum = spectrum.to(dtype=q.dtype).sqrt().view(
+                1, self.num_classes, 1, self.rank)
+            scaled_q = q * sqrt_spectrum
+            energy = (scaled_q * (scaled_q @ metric)).sum(dim=-1)
+        statistics.update(
+            iacs_spectrum_std=spectrum.detach().std(unbiased=False),
+            iacs_spectrum_min=spectrum.detach().min(),
+            iacs_spectrum_max=spectrum.detach().max())
+        energy = energy.permute(0, 2, 1)
         scale = F.softplus(self.log_scale)
         correction = 0.5 * energy * scale.view(1, 1, -1)
         return correction, scale, mix, anisotropy, statistics
@@ -316,6 +354,8 @@ class OffSegCCMIACS(OffSegCCMACS):
                  iacs_center_statistics=False,
                  iacs_assignment='spatial',
                  iacs_reliability_shrink=False,
+                 iacs_persistent_spectrum=False,
+                 iacs_spectrum_scale=0.5,
                  **kwargs):
         super().__init__(
             in_channels=in_channels,
@@ -340,7 +380,9 @@ class OffSegCCMIACS(OffSegCCMACS):
             classwise_mix=bool(iacs_classwise_mix),
             center_statistics=bool(iacs_center_statistics),
             assignment=iacs_assignment,
-            reliability_shrink=bool(iacs_reliability_shrink))
+            reliability_shrink=bool(iacs_reliability_shrink),
+            persistent_spectrum=bool(iacs_persistent_spectrum),
+            spectrum_scale=float(iacs_spectrum_scale))
 
     def _subspace_correction(self, metric_feat, centres, ccm_logits):
         raw_correction, scale, mix, anisotropy, statistics = self.acs(
@@ -376,6 +418,12 @@ class OffSegCCMIACS(OffSegCCMACS):
             seg_logits['iacs_reliability_max'].detach())
         losses['acc_iacs_assignment_tv'] = (
             seg_logits['iacs_assignment_tv'].detach())
+        losses['acc_iacs_spectrum_std'] = (
+            seg_logits['iacs_spectrum_std'].detach())
+        losses['acc_iacs_spectrum_min'] = (
+            seg_logits['iacs_spectrum_min'].detach())
+        losses['acc_iacs_spectrum_max'] = (
+            seg_logits['iacs_spectrum_max'].detach())
         raw_move = seg_logits['iacs_raw_move'].detach()
         applied_move = seg_logits['acs_correction'].detach().abs().mean()
         losses['acc_iacs_raw_move'] = raw_move
