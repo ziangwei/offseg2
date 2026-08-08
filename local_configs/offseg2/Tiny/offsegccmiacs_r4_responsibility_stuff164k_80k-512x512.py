@@ -3,6 +3,10 @@
 # validation/checkpoints every 4000 and total batch size 16.
 _base_ = ['./offsegccmiacs_r4_stuff164k_80k-512x512.py']
 
+# Tiny and Base configs share a basename, so their default MMEngine work_dir
+# would collide without an explicit scale-specific directory.
+work_dir = './work_dirs/offsegccmiacs_r4_responsibility_t_stuff164k_80k-512x512'
+
 model = dict(
     decode_head=dict(
         iacs_center_statistics=False,
