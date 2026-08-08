@@ -1,0 +1,888 @@
+# PARSeg Experiment Summary
+
+> HISTORICAL RAW ARCHIVE — frozen after the PARSeg/early OffSeg exploration.
+> It mixes final values, interim readings, predictions and assistant-written
+> interpretations. It is retained for traceability, not as the current route or
+> a source that can be quoted without checking. Canonical status and verified
+> result labels live in `THESIS_ROUTE.md` and `EXPERIMENTS.md`.
+
+## Baseline
+
+- Current ADE20K PARSeg3/base reference used in recent tests: about `48.17` to `48.2` mIoU.
+- FT runs load this base: `work_dirs/parseg3_ade20k_160k-512x512_4x4_try1/iter_160000.pth`.
+- Earlier discussion also mentioned a stronger PARSeg3 asset around `48.84`; keep this separate from the current `try1` baseline.
+- Validation/checkpoint interval was shortened for experiments:
+  - ADE20K / Cityscapes: every `8000` iterations.
+  - COCO-Stuff: every `4000` iterations.
+
+## Diagnostic Findings
+
+### Active-class oracle
+
+- ADE train subset, `2000` images:
+  - baseline mIoU: `48.17`
+  - active-class oracle: `58.39`
+  - ceiling delta: `+10.22`
+- Interpretation: knowing which classes are present has a large oracle ceiling, but this does not make a learnable active-class predictor useful.
+
+### Learnable active-class / presence predictor
+
+- Realizable gain was only about `+0.03`.
+- Interpretation: active-class prediction from the current base feature/output is not a reliable main direction.
+
+### Error confidence and type
+
+- Wrong pixels include many confident errors:
+  - confidence >= 0.7: `54.7%`
+  - confidence >= 0.9: `28.6%`
+- Error decomposition:
+  - ABSENT-FP: `42.6%`
+  - PRESENT-CONF: `57.4%`
+- Interpretation: the main issue is not simply uncertain boundary pixels or missing active-class priors; many mistakes are confident co-present class confusions.
+
+### Top-k / rerank oracle
+
+- On wrong pixels, GT often already appears in the candidate list:
+  - top-2: `54.8%`
+  - top-3: `71.8%`
+  - top-5: `84.5%`
+- A top-k rerank oracle showed a very large upper bound; top-2 rerank was discussed as roughly `+18.38`.
+- Interpretation: the information is often already present in the logits, but the final ranking/decision is wrong.
+
+### Boundary / interior probe
+
+- Error location split: present-conf errors are about `63.7%` interior / `36.3%` boundary; about `26%` of all errors hug a boundary.
+- Boundary vs interior ORACLE (`tools/probe_boundary_oracle.py`, ADE val, `2000` images, base `48.17`), perfect fix of each region:
+  - boundary `r=3`: mIoU `59.68`  (delta `+11.52`, band = `13.2%` of px)
+  - boundary `r=5`: mIoU `64.58`  (delta `+16.41`, band = `20.6%` of px)
+  - boundary `r=8`: mIoU `70.16`  (delta `+21.99`, band = `30.2%` of px)
+  - interior (non-boundary wrong px, `r=5`): mIoU `76.90`  (delta `+28.74`)
+- Interpretation: the boundary route has a real but capped oracle ceiling (`+16.41` at `r=5`) and the realized gain from it (IGR) was ~0; the larger recoverable pool is interior/semantic (`+28.74`), which the decision-side family could not reach either. High-resolution boundary-only refinement is not the main ADE20K bottleneck.
+
+### Frozen feature separability
+
+- Frozen PARSeg3 `align` features linearly separate top confusion pairs at roughly `98% - 100%`.
+- Top confusions cluster around the wall family (ceiling/door/window/cabinet/mirror/curtain <-> wall), plus building/tree, road/sidewalk, rug/floor, armchair/sofa; top-25 pairs cover ~`33.7%`.
+- Interpretation: the feature contains separable information; the problem is how the feature is converted into decisions/logits.
+
+## Model Attempts and Results
+
+### SCA2 / GEO
+
+- ADE interim numbers:
+  - GEO at `152000 iter`: about `47.34`
+  - SCA2 at `144000 iter`: about `46.49`
+  - both below base `48.2`
+- GEO on Cityscapes had not clearly fallen behind at that time, but ADE results were not supportive.
+- Decision: stop as main ADE direction.
+
+### PARSeg6 family
+
+- TCQ task token degenerates in semantic-only training because the task token is a constant parameter.
+- Evidence fusion was not independent: offset logits were both used to find hard pixels and fused into the final output.
+- Scaffold tests were mostly AST/string checks and did not run forward.
+- Configs inherited dead parseg3 parameters, making reproduction confusing.
+- Decision: too much module stacking and not a coherent main line.
+
+### CDC
+
+- PARSeg3 plus a residual cosine decision head.
+- Identity-safe and useful as a pilot.
+- Contribution too small for the main thesis direction.
+
+### CAS
+
+- Tried to keep PAL attributes while adding confusion-aware attribute separation.
+- No recorded positive mIoU signal.
+- Decision: not used as main line without independent positive evidence.
+
+### APC
+
+- Inspired by SSA-Seg adaptive classifier, but using feature purity instead of mask confidence.
+- Revised with GT-EMA centers, cosine logits + scale, bounded gate, and coarse centering.
+- FT results:
+  - `8000 iter`: `45.07`
+  - `136000 iter`: `46.83`  (still about `1` point below the contemporaneous base)
+- Interpretation: regressed throughout and never reached base; the aux / teacher / distill gradients most likely disturbed the tuned PARSeg3 decision surface (the bounded gate blocks the forward path but not the gradient).
+- Decision: stop.
+
+### IGR
+
+- Frozen PARSeg3 plus image-guided high-resolution point recompute (image-guided PointRend).
+- FT results:
+  - `8000 iter`: `48.08`
+  - `16000 iter`: `48.07`
+  - later: oscillates around `48.05` (no gain, a touch below base).
+- Why it cannot gain: the point head re-classifies uncertain points from the SAME frozen features (image high-freq gives boundary location, not class), so it reproduces base on ties; uncertainty sampling structurally misses the confident INTERIOR errors; and mIoU barely rewards a thin boundary band.
+- Decision: negative ablation.
+
+### GDS
+
+- Kept PARSeg3/PAL/AGCF and added an attribute-geometry residual branch.
+- FT behavior:
+  - final validation stayed around `48.1700`, same as base.
+  - checkpoint: `decode_head.gds_alpha alpha = -0.2341673821`
+  - corresponding `gate = -0.0459958166`
+- Interpretation: the branch trained and the gate moved, but the global signed residual became negative and did not improve mIoU.
+- Decision: global residual correction is the wrong interface.
+
+### SGC
+
+- Replaced GDS global signed gate with a positive local spatial selector.
+- FT results:
+  - `8000 iter`: `48.03`
+  - `16000 iter`: `48.05`
+- Interpretation: even local selection did not find useful corrections.
+- Decision: stop the residual correction / auxiliary classifier / selector family.
+
+### PALX
+
+- Internal PAL refinement change rather than external correction.
+- Replaces PARSeg3 `prototype_attribute_refinement` with PALX refinement.
+- Final prediction still follows the native PARSeg3 path:
+  - `base_head_logits`
+  - `refinement_head_logits`
+  - `AGCF`
+- Adds training-time PAL geometry losses:
+  - GT center alignment.
+  - base-mined hard-negative margin.
+- Local implementation:
+  - commit: `13c6528 feat: add PARSeg PALX head`
+- FT results:
+  - `8000 iter`: `48.0300`
+  - `16000 iter`: `48.3100`
+  - `24000 iter`: `48.0300`
+  - `32000 iter`: `48.0300`
+- Interpretation: PALX is the first post-failure direction with a real positive validation point (`16k`, about `+0.14` over the current `48.17` base), but the gain is not stable. This suggests a short-window effect or over-training of the frozen-base PAL refinement head, not a full-run-ready method yet.
+- Decision: keep `iter_16000.pth` for diagnosis; stop the current unchanged FT after the drop. Next test should narrow the schedule/loss around the early optimum rather than continue to 40k or launch full 160k.
+- Follow-up config:
+  - `local_configs/offseg2/Base/parsegpalx_ft_short_ade20k_160k-512x512.py`
+  - `max_iters=24000`
+  - `val_interval=4000`
+  - lower geometry weights: `palx_marginw=0.06`, `palx_centerw=0.04`, `palx_margin=0.08`
+  - optimizer no longer inherits the 10x head lr; uses AdamW `lr=1e-4`
+- Follow-up goal: test whether the `16k` peak is reproducible and stable around `12k/16k/20k` without pushing PAL geometry until collapse.
+- Short follow-up observed first three validation points:
+  - first val: `48.26`
+  - second val: `48.10`
+  - third val: `48.07`
+- Updated interpretation: the positive PALX signal moved earlier but still decayed quickly. Even the best recorded point (`48.31`) is only about `+0.1` to `+0.14` over the current `48.17/48.2` base and is not enough as a thesis-level model contribution. PALX should not be polished further as the main line unless it produces a reproducible `>= +0.5` mIoU effect.
+
+### EVF (DINOv2 evidence fusion)
+
+- Idea: fuse a second frozen backbone (DINOv2, via timm) into PARSeg3 through a learned per-pixel gate; only the DINOv2 head + gate train.
+- Status: REJECTED by design, not run. It relies on an external pretrained model / distillation-style fusion, which is off-target for this thesis: new information must come from re-processing the EXISTING backbone, not from importing a bigger external net. This is a scope decision, not a measured negative.
+- Files exist locally (`PARSegEVF.py`, `parseg_evf_*` config) but should be treated as dead unless the scope changes.
+
+### RCR (region-centric re-decision)
+
+- Idea: discover per-image regions by slot-attention over PARSeg3's frozen fused feature, decide each region's class at the REGION level (with inter-region context), then gate-override the base. Motivated by the diagnosis: the confused pairs are ~98% separable in the frozen feature, the errors are confident WHOLE regions, and per-pixel CE under-trains those few regions -> move the unit of decision from pixel to region so each mislabeled region becomes one strong sample.
+- Difference from the senior's mask2former / PAL attribute decoder: those use FIXED learned per-class queries (same every image); RCR uses DATA-DEPENDENT regions discovered per image.
+- Files: `mmseg/models/decode_heads/PARSegRCR.py`, config `local_configs/offseg2/Base/parseg_rcr_ade20k_160k-512x512.py`.
+- FT result: `8000 iter` did not beat base, then degraded monotonically with more training (collapse) -- WORSE than the flat post-hoc attempts.
+- Why it collapses: the override content is a coarse region map (100 soft slots over a whole image, grouped at 1/8 and bilinearly upsampled), so any region that mixes classes assigns one wrong class to most of its pixels. The aux loss forces this region map to exist, and CE on `final` pushes the gate `g` up wherever the region map happens to help on a batch; the conv gate then generalizes that rise broadly, so the harmful coarse map increasingly overrides good base pixels -> monotonic decline. Slot attention on frozen features under CE (not reconstruction) is also collapse-prone.
+- Decision: confirmed negative, and the strongest evidence yet that the post-hoc gated-override family is exhausted (GDS/SGC/IGR flat, RCR collapses).
+
+## Current Strategic Conclusion
+
+Mostly ruled out:
+
+- active-class predictor
+- high-resolution boundary-only refinement
+- post-PARSeg residual correction
+- external auxiliary classifier / selector
+- external pretrained-model fusion / distillation (off-target by scope)
+- broad module stacking without a single hypothesis
+
+Most plausible remaining line after DGM:
+
+- Do not correct after PARSeg3 has already produced final logits.
+- Do not add another global auxiliary classifier or metric branch.
+- If continuing model work, the next hypothesis must be conditional/local: the probe separability is pair/subspace-specific, while DGM used one global 150-way geometry.
+- Any new model must explain how it selects the relevant comparison context without using an oracle class set.
+
+### DGM (decision geometry modeling)
+
+- New hypothesis after PALX proved too small: the useful separability already exists in `align` features, but the base/PAL decision surface is not constrained to use a clean feature-class geometry.
+- DGM adds a normalized metric classifier inside the PARSeg3 base decision path:
+  - raw offset logits are still computed.
+  - metric logits are mixed into `base_head_logits` before PAL refinement.
+  - PAL refinement and AGCF consume this geometry-aware base, so this is not a final-logit post-hoc correction.
+- DGM trains the metric space with:
+  - metric auxiliary CE.
+  - nearest-negative feature margin.
+  - feature-to-class-weight pull.
+  - small class-weight separation penalty.
+- Configs:
+  - full: `local_configs/offseg2/Base/parsegdgm_ade20k_160k-512x512.py`
+  - warm-start FT: `local_configs/offseg2/Base/parsegdgm_ft_ade20k_160k-512x512.py`
+- Test discipline: run warm-start FT first. If it cannot create a stable positive trend over the `48.17/48.2` checkpoint, do not spend a full 160k run on DGM.
+- Warm-start FT results:
+  - `8000 iter`: `47.64`
+  - `16000 iter`: `48.10`
+  - `24000 iter`: `48.14`
+  - `32000 iter`: `48.16`
+  - `40000 iter`: `48.10`
+- Interpretation: DGM recovered from the early hit but never exceeded the PARSeg3 checkpoint (`48.17/48.2`). The normalized global metric classifier does not turn the probe-observed separability into validation mIoU. Do not run full 160k.
+
+### LCR (local candidate relation)
+
+- New hypothesis after DGM failed: probe separability is local and conditional, not captured by one global 150-way metric geometry.
+- LCR builds a per-pixel candidate set from raw PARSeg3 base logits, scores only those candidate/class relations against the aligned feature, and injects the learned delta into `base_head_logits` before PAL refinement.
+- This is not a fixed easy-confusion table and not an oracle active-class set: the comparison context is selected dynamically by the model's own current candidate list.
+- Training target:
+  - auxiliary CE on relation-corrected base logits.
+  - candidate ranking loss only where GT appears in the local top-k, directly targeting wrong top-k ordering.
+- Configs:
+  - full: `local_configs/offseg2/Base/parseglcr_ade20k_160k-512x512.py`
+  - warm-start FT: `local_configs/offseg2/Base/parseglcr_ft_ade20k_160k-512x512.py`
+- Stop rule: run warm-start FT first. If `16k` is not clearly above `48.17/48.2`, stop. Continue only if candidate ranking gives a stable positive validation trend.
+- Warm-start FT results:
+  - `8000 iter`: `48.14`
+  - `16000 iter`: `48.01`
+  - `24000 iter`: `47.82`
+  - `32000 iter`: `48.33`
+  - `40000 iter`: `47.87`
+- Interpretation: LCR produced one positive checkpoint (`32k`, about `+0.13` to `+0.16` over the current PARSeg3 checkpoint), but the curve is unstable and immediately collapses again. This is stronger than a flat failure, because conditional/local relation can briefly help, but it is still far below a thesis-level stable gain. Do not run full 160k unchanged.
+
+Resolved sequence after RCR:
+
+- RCR did not clear `48.2`: it failed to beat base at `8k` and then collapsed. Per the pre-registered fork, the post-hoc gated-override family is confirmed exhausted (GDS/SGC/IGR flat, RCR collapses).
+- PALX briefly reached `48.31` but was not stable.
+- DGM failed as a global metric-geometry branch.
+- LCR briefly reached `48.33`, suggesting the local candidate-relation hypothesis has a weak signal, but the optimization/window is unstable.
+- Meta: every warm-start add-on around the frozen/tuned `48.2` PARSeg3 checkpoint has either stayed near base, collapsed, or produced only a narrow `+0.1` spike. The next step should be diagnosis around the positive spike, not another blind module.
+
+## Next Full-Training Slots
+
+### PLCR (PAL-guided local candidate relation)
+
+- Purpose: combine the two weak positive signals:
+  - PALX says PAL attribute geometry can slightly help.
+  - LCR says local candidate relation can briefly help.
+- Difference from LCR: candidate class representations come from PAL class features, not a standalone class embedding.
+- Hypothesis: local top-k comparisons become more stable when the comparison units are PARSeg/PAL attribute prototypes rather than an external relation MLP's learned embeddings.
+- Config: `local_configs/offseg2/Base/parsegplcr_ade20k_160k-512x512.py`
+
+### CDR (candidate decision ranking)
+
+- Purpose: isolate the training objective from model structure.
+- Difference from LCR/PLCR: no new inference branch and no new logits correction. It keeps native PARSeg3 inference and only adds top-k ranking losses during training.
+- Hypothesis: if the oracle/top-k diagnosis is trainable, a direct candidate ranking objective should improve PARSeg3 without extra decoder complexity.
+- Config: `local_configs/offseg2/Base/parsegcdr_ade20k_160k-512x512.py`
+
+### OSC (omni-scale context calibration)
+
+- Purpose: test a decoder direction orthogonal to candidate ranking.
+- Inspiration: recent strong segmentation decoders repeatedly emphasize multi-scale context and scale selection rather than only logits reranking.
+- Mechanism: local, dilated, and global context branches are mixed by a learned scale gate, then injected before offset learning and PAL refinement.
+- Hypothesis: some ADE failures come from missing scene/context evidence before decision formation, not merely wrong top-k ordering.
+- Config: `local_configs/offseg2/Base/parsegosc_ade20k_160k-512x512.py`
+
+## Stop Rules for New FT Runs
+
+- Load PARSeg3 `iter_160000.pth` for FT sanity checks.
+- Initial / 8k validation should be close to `48.17` / `48.2`.
+- If `8k < 48.0`, stop.
+- If `16k` is still at or below `48.17` with no upward trend, stop.
+- Only continue to `40k` or launch full `160k` if `16k` shows a clear positive signal, or if high-confidence co-present confusions improve materially.
+
+## CGR probe (confusion-group regional re-decision)
+
+- User-level decision after reviewing PLCR/CDR/OSC:
+  - PALX/PLCR is brittle, heavy, and hard to describe.
+  - OSC has the weakest argument.
+  - CDR changes too little.
+  - These should not occupy the next main training slots unchanged.
+- New hypothesis: most failed variants were pixel-independent corrections learned from PARSeg3's own logits/features/confidence. The only direction not fully killed is region/group-level re-decision, but RCR failed because the region/slot map and learned output gate were poor.
+- CGR probe is deliberately training-free:
+  - fit pure class prototypes from GT-labelled train pixels in PARSeg3 refinement feature space;
+  - do not use PARSeg3 confidence or `p_base * confidence` when building prototypes;
+  - route pixels only by base top-k group membership, then re-decide within a small confusion group;
+  - smooth group scores by feature affinity so replacements are spatially coherent;
+  - report baseline mIoU, CGR mIoU, correction, damage, and corr/damage.
+- Tool added: `tools/probe_cgr_redecision.py`.
+- Main command to run:
+  `python tools/probe_cgr_redecision.py local_configs/offseg2/Base/parseg3_ade20k_160k-512x512.py work_dirs/parseg3_ade20k_160k-512x512_4x4_try1/iter_160000.pth --fit-images 2000 --eval-images 2000 --num-prototypes 3 --prototype-cache work_dirs/cgr_parseg3_ade20k_k3_train2000.pt`
+- Readout rule:
+  - `delta >= +0.20`: worth writing a CGR training head.
+  - `+0.05 <= delta < +0.20` with `corr/damage > 1`: write only a light gated variant, not a heavy decoder.
+  - otherwise: do not write a full CGR model; inspect group damage and rethink the premise.
+
+### CGR probe results so far
+
+- Fixed-size but over-broad routing (`top-k` intersects group):
+  - baseline `47.0143`, CGR `25.6049`, delta `-21.4093`, changed `27.313%`, corr/damage `0.140`.
+  - Diagnosis: routing touched far too many pixels; it was effectively rewriting common classes.
+- Label-aligned fixed pipeline + narrow routing (`trigger_topk=2`, `min_group_hits=2`):
+  - baseline `46.7464`, CGR `46.4445`, delta `-0.3019`, changed `3.123%`, corr/damage `0.395`.
+  - Diagnosis: routing width is now sane, but direct prototype winner still damages more than it corrects.
+- Next probe change:
+  - add `--sweep-margins` and per-group correction/damage reporting.
+  - Goal: determine whether high prototype margin or a specific confusion group has positive signal; if every margin/group remains `corr/damage < 1`, do not write a CGR model.
+  - Final sweep: corr/damage stayed ~0.139 across margins/groups -> CGR closed, no training head written.
+
+## From-scratch 160k round 1 (four configs)
+
+- LCR : 48.60 at the FINAL iter (peak = endpoint; best local number to date).
+- HCE : 47.78. LAR-A: 47.69. Both below base; closed.
+- SDR : 48.08 at 120k, then oscillated 47-48; below base at end. Closed.
+  Post-mortem: rival/absent margins sharpen logits and shift the entropy
+  statistics AGCF's gate depends on; GT-pooled teacher is self-trivial so
+  KD ~ sharper CE. Repositioned as the "losses-alone do not work" negative
+  ablation supporting LCR's structural necessity.
+- LCR 160k->200k continuation at lr=1e-6 (eta_min=1e-8, 40k): no ckpt beat
+  48.60. Expected and uninformative (poly had annealed; fresh low-lr restart
+  explores nothing). Do not count as evidence about LCR headroom.
+
+## LCR autopsy (2000 val images, same pipeline on both ckpts)
+
+- Learned gate = 0.107 (31% of the 0.35 ceiling): ceiling not binding; the
+  GLOBAL scalar is the coarse part.
+- Error decomposition: total err 18.05% -> 17.51%. ABSENT-FP 7.69 -> 7.27
+  (~78% of the gain); PRESENT-CONF 10.36 -> 10.24 (~22%). LCR mostly
+  suppresses absent-class intruders, interior semantic confusion largely
+  untouched.
+- Interior/boundary split unchanged (63.7/36.3 -> 63.6/36.4). Margin
+  histogram unchanged. Top-2 rerank oracle AFTER LCR still +18.98 (pool not
+  depleted). Note: top-k recall is computed on each model's OWN wrong
+  pixels; do not compare across models.
+- Overall-confidence rose ([0.95,1) bucket 289M -> 295M px).
+
+## LCR2 (windowed evidence + conditional per-pixel gate): FAILED
+
+- From-scratch 160k: 47.45 at 80k (above same-iter reference), then decayed;
+  <47 until ~120k; 47.71 at 128k; 47.75 at 152k. ~0.85 below LCR v1.
+- Led early, lost the consolidation phase. Two candidate mechanisms:
+  (a) gate/scorer inputs are base-probability statistics that saturate as
+  the model sharpens late in training (v1's input-free scalar gate is
+  immune); (b) 13x13 window support de-noises an immature base early but
+  erodes boundaries/thin classes once the base is clean. Closed; do not
+  iterate. Pre-registered kill rule (96k-128k below v1 curve) would have
+  saved the last 40k -- apply kill rules at the gate next time.
+
+## Text-anchor round (three from-scratch 160k slots): geometry axis DEAD
+
+- Principle for all text work: GT-derived text allowed in TRAINING only;
+  inference must be text-free (contrast with DTFormer, where GT-mapped
+  vocabulary at inference = presence oracle; our measured +10.22 axis).
+- Key information argument (confirmed): per-image GT text is redundant with
+  seg_label; the only net-new content is the pretrained language-space
+  INTER-CLASS GEOMETRY. Assets: tools/gen_text_anchors.py -> frozen CLIP
+  ViT-B/32 class-name anchors (offline, ~300KB; no text model in
+  training/inference graphs).
+- LTA (LCR + anchors as scorer class_embed via linear proj + 0.1 residual):
+  46.95. PTA (plain PARSeg3 + anchored Offset_Learning cls_repr): 46.97.
+  Both catastrophic (~-1.2 vs base).
+- LTC (LTA + GT-routed class-granular InfoNCE, prototypes->anchors): 48.48
+  ~= LCR band. QUASI-REPLICATION of the LCR-core level: {48.60, 48.48} vs
+  all non-LCR-core runs {46.9..48.2}.
+- Mechanism (ckpt forensics): CLIP class-name cone. LTA class-vector
+  pairwise cos mean 0.628 / p95 0.810, residual/projection norm ratio 1.05
+  (could not escape); LTC after InfoNCE: mean 0.013 / p95 0.285, ratio 3.04
+  (InfoNCE = antidote that re-spreads the cone, then net text contribution
+  ~ 0). Confusable pairs are CLOSE in text space (armchair~chair 0.96,
+  sidewalk~road 0.90, door~wall 0.86): language relatedness ~ visual
+  confusability, so raw name-embedding geometry is the WRONG-SIGN prior for
+  class vectors.
+- Conclusion: text-as-class-geometry is dead at both injection points.
+  Open follow-ups (not run): (a) language similarity inverted into a
+  confusability/hardness prior; (b) per-class discriminative DESCRIPTIONS
+  (not names) grounding PAL attribute tokens.
+
+## SAF (supervised arbitrated fusion): DELIVERED, running next
+
+- Target: the un-cashed fusion oracle -- perfect per-pixel choice between
+  the two heads = +1.9 (measured earlier; both opinions computed at
+  inference, not a mirage-class oracle). Fusion is the one subsystem never
+  attacked all year.
+- Mechanism: AGCF replaced by a small arbiter (25.8k params) reading
+  DETACHED per-head stats + 1x1-compressed logits; alpha in (0,1), final =
+  base + alpha*(refine-base); NEW supervision = BCE(alpha, free meta-label
+  "which head was right") on disagreement pixels only; alpha starts uniform
+  0.12. Verified: BCE gradient reaches arbiter only (heads exactly 0).
+- Files: PARSegSAF.py, parsegsaf_ade20k_160k-512x512.py,
+  tools/saf_sanity_forward.py. From-scratch 160k.
+- Read-out: success >= 48.7 at 160k; kill if 96k-128k clearly below try1
+  curve. If it lands: v2 = role-specialize the heads toward the two error
+  families (absent-FP vs present-conf) to GROW the disagreement oracle.
+
+## Text follow-up analysis (no GPU): inversion idea measured and dropped
+
+- "Language similarity as a confusability prior": measured on the top-25
+  confusion pairs vs the name-anchor matrix. Confusion pairs' text cos
+  mean 0.841 vs all-pairs background 0.782 (p90 0.847); within-row
+  percentile mean 0.824; only 8/25 confusion targets in text top-5.
+  Conclusion: name-level text is only weakly informative about visual
+  confusability; the model's own logits localize rivals far better (that
+  is LCR). Inversion idea dropped without a training slot.
+- Remaining text hypothesis: descriptions, not names (attribute content).
+
+## PAT (description-grounded PAL attribute tokens): DELIVERED, running next
+
+- Mechanism: 150 x 6 hand-written attribute descriptions (material/shape/
+  position/function/context/appearance; NO negation, NO explicit contrast
+  -- CLIP encodes negation unreliably and explicit contrast would
+  contaminate attribute content; owner decision). Frozen CLIP embeddings
+  kept as per-class SETS [150,6,512], never averaged (averaging re-creates
+  the cone). Training-only InfoNCE: present classes' calibrated attr
+  tokens vs all classes' description sets, score = mean_a max_k cosine
+  (soft assignment; tokens free to specialize). pat_w=0.15, tau=0.1,
+  ramp 8k. Forward/inference = PARSeg3 exactly (verified bit-identical);
+  new params = 512x256 projection only (+1.8MB frozen buffer in ckpt).
+- Precedent for the bet: PALX's GT-anchoring of PAL geometry gave the
+  year's rare positive spikes; PAT is the language version with a
+  STATIONARY frozen-text target (also fixes SDR's drifting-teacher and
+  LCR2's input-drift failure modes at this location).
+- Files: tools/ade20k_class_descriptions.txt (SINGLE SOURCE OF TRUTH for
+  the text, plain data file, hand-editable; any uniform K per class),
+  tools/gen_text_descriptions.py (offline encoder, parses the txt),
+  PARSegPAT.py, parsegpat_ade20k_160k-512x512.py,
+  tools/pat_sanity_forward.py. Re-run the encoder after any txt edit.
+- Read-out vs base try1 48.17; kill 96k-128k if clearly below try1 curve.
+  Portfolio framing: SAF = the mIoU bet (fusion subsystem), PAT = the
+  narrative bet (PAL x language, one slot only).
+
+## Text round 2 (three slots): LDR / TDL / TAM -- DELIVERED, running next
+
+Three distinct text-usage principles, all reusing the desc6 asset, all
+text-free at inference (frozen buffers only), all starting at or near the
+plain PARSeg3 operating point:
+
+- LDR (text as EVIDENCE): LCR v1 skeleton unchanged (learned class embed,
+  gate, aux+rank losses); the scorer additionally sees three per-candidate
+  description-match scalars (max/mean cos of pixel feature vs the
+  candidate's 6 projected descriptions + gap to top-1). Augment-never-
+  constrain (inverted LTA lesson); delta zero-init. Compare vs LCR band
+  (48.60/48.48) to isolate the text-evidence effect.
+- TDL (text as CONTENT): 900-entry frozen description dictionary; PAL
+  refinement features retrieve from it by single-head cross-attention
+  (q 256->64, bank k/v), added back through a bounded scalar gate
+  (init 0.05, max 0.5). DTFormer/TSAM lineage made train/inference-
+  symmetric. Base head untouched. Watch learned gate in ckpt; gate->0 =
+  dictionary rejected. Compare vs try1 48.17.
+  v2 (pre-launch, owner-prompted critique): CE-only retrieval supervision
+  judged too indirect (predictable degeneration into a generic feature
+  bias / random-basis layer). Added a GT-routed alignment loss (attention
+  mass onto the GT class's own K entries; w=0.1, ramp 8k) + live needle
+  `acc_tdl_gt_mass` (uniform baseline 1/150=0.0067) + `tdl_random_bank`
+  flag for the text-content-load-bearing control run.
+- TAM (text as METRIC): per-class diagonal channel weights on the
+  refinement cosine, w_c = 1 + 0.5*tanh(W(desc_mean_c)+r_c), W/r zero-init
+  -> starts EXACTLY PARSeg3 (verified bit-identical). Language seeds which
+  channels matter per class; bounded positive weights carry no cross-class
+  geometry constraint (cone cannot apply). Compare vs try1 48.17; check
+  spread of w_c post-training.
+- Verified locally (tools/text3_sanity_forward.py): identity/near-identity
+  at init, all losses finite, gradients reach every text pathway; registry
+  builds at 150 classes. New params: LDR ~101k / TDL ~180k / TAM ~169k.
+- Kill rules: 96k-128k clearly below the respective reference curve.
+
+## Results: PAT / SAF / LDR (2026-07 readouts)
+
+- PAT (description-grounded PAL attribute tokens): 48.27 final.
+  +0.10 over base try1 (48.17) = inside run noise; well under the LCR band
+  (48.60/48.48). The PAL-grounding text bet is NEUTRAL, mirroring LTC:
+  properly controlled text contributions keep landing at ~0.
+- SAF (supervised arbitrated fusion): 47.9 final. FAILED (-0.27 vs base).
+  The +1.9 fusion oracle did NOT cash. Candidate causes, honestly ranked:
+  (a) "who-is-right" is learnable on train but generalizes poorly to val
+  (predicting rightness ~ predicting errors = hard); AGCF's entropy
+  heuristics generalize better than a trained meta-classifier;
+  (b) recipe side effect: AGCF's gate computation is NOT detached in
+  PARSeg3 (its entropy path feeds gradient into both heads); SAF detached
+  the arbiter inputs, silently removing a head-shaping pathway;
+  (c) arbiter overfit to train disagreement statistics.
+  Decision: fusion-redesign line shelved. v2 (head specialization) is moot
+  without a working arbiter.
+- LDR (description evidence in the LCR scorer): killed at 88k -- two val
+  points significantly below the same-iter values of the reference logs.
+  Kill rule applied AT THE GATE this time (process win). Contrast with LTC
+  (neutral): appending desc-match features to the scorer's input hurts,
+  while anchor+InfoNCE was merely neutral -- co-trained desc-match maps
+  likely fed unstable evidence into the candidate corrections during the
+  formative phase.
+- Running/pending at this writing: TAM, TDL(v2). Text scorecard so far:
+  LTA -1.2 / PTA -1.2 / LTC ~0 / PAT ~0 / LDR negative(killed);
+  zero real text wins through five completed experiments.
+
+## ACR (auto-context re-decision): DELIVERED, running next
+
+- The untried subsystem-level move: a second decision round that sees the
+  SPATIAL ARRANGEMENT of round-1's beliefs. Layout encoder (1x1 class
+  embedding -> 3x3 d=1 -> 3x3 d=4) over softmax(final_r1).DETACHED;
+  round 2 = second Offset_Learning over fuse([feat_aligned, layout]);
+  output = final_r1 + g*(r2 - final_r1), g learned scalar in (0,1),
+  init 0.1 (may interpolate to "round 2 is the decision maker").
+- Targets: confident REGIONAL collapses among layout classes (the
+  diagnosed interior present-conf mass). Spatial presence was never
+  tested; global presence's realizable-0 does not cover it.
+- Recipe purity (owner attribution demand): round-1 losses byte-identical
+  to PARSeg3; only additions are CE(r2)=1.0 and anchor CE(final_r1)=0.5.
+  Recipe-layer levers (aux heads / crop / schedule) are permanently
+  rejected as unattributable -- all gains must be structural.
+- Verified: recipe loss set intact + 2 ACR terms finite; r2-CE gradient
+  reaches layout/r2 modules with EXACTLY zero leakage into round-1-
+  exclusive modules (AGCF/PAL) through the detached layout channel;
+  gate init 0.1; 150-class registry build. New params ~336k.
+- Live monitoring: `acc_acr_gate` (rising = round 2 earning trust; stuck
+  at 0.1 = layout adds nothing). Read-out vs base try1 48.17. Kill:
+  96k-128k clearly below try1 curve.
+
+## ACT / TAX (two slots, owner respec): text models WITH aux heads
+
+Owner replaced the plain factorial round: the two slots must be NEW models
+that involve text AND carry the auxiliary head. Delivered:
+
+- ACT (text into the INFERENCE structure): PARSegACR whose layout encoder
+  mixes round-1's belief map through description-anchored class weights
+  (text_proj(desc_mean) + zero-init free residual) -- the second round
+  reads the scene as a SEMANTIC COMPOSITION. First site where the language
+  cone HELPS by design (layout reasoning wants related classes to yield
+  related layout features; the cone only kills discrimination roles).
+  Plus standard FCN aux head. NOTE vs plain ACR the diff is text-layout
+  AND aux (disclosed in config); vs base it is structure-only.
+- TAX (text into the TRAINING structure): stage-3 auxiliary classifier =
+  cosine head over language-derived class vectors (W@desc_mean + UNbounded
+  zero-init residual, tau 0.1). Pulls backbone mid-features toward the
+  language class geometry; the whole head is discarded at inference --
+  deployed model = pure PARSeg3. Cone failure cannot recur by construction
+  (text vectors only carry a disposable auxiliary decision; residual can
+  escape). vs base+aux (if ever run) isolates the LANGUAGE part.
+- Verified: ACT text-layout grads flow (proj/residual), recipe loss set
+  intact, eval OK; TAX logits bounded by 1/tau, grads reach proj/residual/
+  convs, framework discards aux at inference; 150-class builds for both.
+- Kill rules: 96k-128k clearly below try1 curve.
+
+## Aux-head factorial round (two slots): SUPERSEDED by ACT/TAX above
+  (configs parseg3aux / parseglcraux remain on disk for a later ablation
+  round if wanted.)
+
+- Owner ruling on the recipe question: crop/schedule = data/compute budget,
+  permanently rejected (unattributable, "too utilitarian"). Auxiliary head
+  = training-time STRUCTURAL component (in the model definition, removed
+  at inference; same species as SDR teacher / PAT grounding / LCR rank
+  loss) -> admitted into the "training system" chapter, with disclosure
+  (cite PSPNet deep supervision) + an ablation row.
+- Two runs completing the 2x2 factorial with numbers already on file
+  (base 48.17, LCR 48.60):
+  * parseg3aux  : base + stage-3 FCN aux head (in_ch=144, GN, w=0.4).
+    Doubles as the permanent with/without-aux ablation row.
+  * parseglcraux: LCR + same aux head. If effects are additive
+    (candidate decision vs backbone mid-features = different parts),
+    expect ~48.9-49.1.
+- Pure config, no new model files (mmseg native auxiliary_head). GN norm
+  chosen over BN (4-per-GPU BN statistics hazard). Literature prior for
+  deep supervision on small backbones: +0.3~0.5.
+- Kill rules: 96k-128k clearly below the respective reference curves.
+
+## Results: TAM / TAX / LDR-final (2026-07 readouts)
+
+- TAM (text-derived per-class diagonal metric): **48.73 -- best number of
+  the entire project.** +0.56 over base try1 (48.17) on PLAIN PARSeg3 (no
+  LCR), above the LCR band (48.60/48.48). First text win after five
+  failures/neutrals.
+  Why it (probably) worked where others died -- fits the surviving design
+  law exactly: zero-init identity start (w==1 -> byte-identical PARSeg3 at
+  t=0), zero new losses, tiny bounded change (0.5*tanh), and the text role
+  is METRIC STRUCTURE (which channels matter per class; shared projection
+  W couples metric updates across description-similar classes) rather than
+  class-identity geometry (the cone-fatal role).
+  MANDATORY control before this goes in the thesis: TAM-NT (no-text
+  variant, w = 1 + 0.5*tanh(r) only) decides whether LANGUAGE content is
+  load-bearing or any learned per-class diagonal metric suffices.
+- TAX (language-anchored deep supervision): trending well below 48 ->
+  judged failed. Inverse of prior expectation (TAX was rated the safer of
+  the pair): text at backbone mid-features via disposable aux = no; text
+  as inference-time metric structure (TAM) = yes.
+- LDR final (owner reported as "lrp", read as LDR): best 47.15 over the
+  whole run -- confirms the 88k kill.
+- Subsequent owner-reported finals: TDL 47.66; LTM 48.21. Detailed
+  interpretation is recorded in the LTM follow-up section below. TAM-NT
+  remains unreported.
+- Text scorecard update: LTA -1.2 / PTA -1.2 / LTC ~0 / PAT ~0 /
+  LDR -1.0 / TAX fail / **TAM +0.56 WIN** / ACT +0.38* /
+  TDL **47.66 (-0.51, FAIL)** / LTM **48.21 (+0.04, FLAT)**.
+
+## Results: TAX / ACT finals (2026-07 readouts)
+
+- TAX final: 47.72. Confirmed FAIL (-0.45 vs base). Language-anchored
+  deep supervision on backbone mid-features hurts; together with TAM this
+  is a clean inversion of prior expectation (disposable-aux text = no;
+  inference-time metric text = yes).
+- ACT: 48.55 in the final phase. ABOVE base (+0.38), in the LCR band,
+  below TAM. First success of the second-decision-round subsystem.
+  ATTRIBUTION CAVEAT: vs base, ACT differs by (round-2 structure) +
+  (text layout mixing) + (aux head) jointly; plain ACR (round-2, free
+  embedding, no aux) was never trained. A plain-ACR run would decompose
+  the 0.38 and decide whether text-layout belongs in the flagship stack.
+- Positives-above-base appeared across THREE structural families at
+  different sites: TAM 48.73 (refinement-cosine metric), LCR 48.60/48.48
+  (base-logits rerank), and ACT 48.55* (serial post-fusion re-decision).
+  This motivated the LTM/LTX stack program, but the later LTM 48.21
+  read-out disproved additivity; see the final read-outs below.
+
+## LTM + TAM-NT (follow-ups on the TAM win): DELIVERED
+
+- LTM (the 49+ push): LCR candidate rerank x TAM language metric stacked.
+  Different subsystems (base-logits rerank vs refinement-cosine metric),
+  no shared params, both components keep exact original hyperparameters
+  and identity starts (LCR delta==0, TAM w==1 at init -- verified). If
+  additive: ~49.1-49.3. Read-out must beat BOTH 48.73 and 48.60.
+- TAM-NT (mandatory control): tam_use_text=False zeroes the text input so
+  w = 1 + 0.5*tanh(r) (freely learned diagonal metric, no language).
+  TAM >> TAM-NT -> the 48.73 is a genuine TEXT win; TAM ~= TAM-NT -> the
+  honest claim is "per-class metric adaptation" with text demoted to
+  flavor. Run before writing anything.
+- Implementation: PARSegLTM.py (subclass swap of the refinement head);
+  tam_use_text flag added to PARSegTAM (default True = byte-identical to
+  the 48.73 run). Both build at 150 classes; all losses finite; tam_proj
+  gradient flows in the stack.
+
+### Final read-outs (owner reported, 2026-07-19)
+
+- TDL final ADE20K mIoU: **47.66** (`-0.51` vs base 48.17). The text
+  dictionary/content route failed.
+- LTM final ADE20K mIoU: **48.21** (`+0.04` vs base 48.17), below both
+  standalone TAM 48.73 and LCR 48.60/48.48. LCR x TAM is non-additive;
+  stacking destroyed the individual gains instead of combining them.
+- Decision: the LTX launch gate failed. Do not launch the triple stack
+  on the basis of these results.
+
+## LTX (triple stack): DELIVERED BUT WITHDRAWN; launch gate failed
+
+- PARSegLTX = LCR rerank (site 1: base logits) x TAM language metric
+  (site 2: refinement cosine) x ACT text-layout round 2 (site 3: post-
+  fusion) + FCN aux head. All components keep exact original
+  hyperparameters; verified identity starts (LCR delta==0, TAM w==1,
+  round-2 gate 0.1); 9 losses all finite; gradients reach layout/TAM
+  projections; 150-class build through the LTM->LCR config chain.
+- LAUNCH GATE RESULT: FAILED. LTM read out at 48.21, below TAM and LCR;
+  additivity is rejected and LTX is withdrawn rather than launched.
+- Optional decomposition run for a free slot: plain ACR (no text, no aux)
+  would split ACT's +0.38 into round-2 / text-layout / aux parts and
+  decide whether text-layout stays in the flagship.
+
+## RABA mask-classification route: FAILED (final read-outs, 2026-07-21)
+
+- RABA changed the decision paradigm from PARSeg3's dense pixel classifier
+  to region-query mask classification with learned class centers and four
+  routed attribute residuals. It remained end-to-end, text-free, and used
+  the same EfficientFormerV2-S2 backbone / ADE20K 160k protocol.
+- Original RABA (3 decoder layers, final-stage loss only): `43.05` at 80k,
+  versus same-stage PARSeg3 `46.32`. The run was stopped as badly
+  under-optimized.
+- RABA-3L with all-stage auxiliary supervision: **46.38 final**.
+- RABA-6L with all-stage auxiliary supervision: **46.95 final**.
+- Deep supervision rescued optimization, while 3L -> 6L added `+0.57`;
+  nevertheless the best variant remains `-1.22` versus the current
+  PARSeg3 try1 reference (`48.17`) and `-1.89` versus the separately
+  reported stronger PARSeg3 asset (`48.84`).
+- Decision: close RABA as the main line. Do not spend slots on A=1, 9-layer
+  depth, or HyperConnection controls: the route is already noncompetitive,
+  and its surviving gain is attributable to generic decoder depth rather
+  than the proposed multi-attribute decision mechanism.
+
+## Standing note
+
+- Results of every new experiment get appended to this file at read-out
+  time (owner request, 2026-07-06).
+
+## HyperConnection and high-ceiling decoder follow-ups (2026-07-22)
+
+- `PARSeg3-HC2-S34`: stage-local static HyperConnection is added only to
+  encoder stages 3/4; the PARSeg3 decoder remains unchanged. The run was not
+  complete at the latest read-out. It looked somewhat better than the PCHD
+  variants, but no exact mIoU was reported, so no numeric result is recorded.
+- `PCHD4-Fixed`: about `46.0` mIoU at `144000 iter`. This is an approximate
+  intermediate owner read-out, not a final metric. The run was cancelled.
+- `PCHD4-Hyper`: about `45.0` mIoU at `144000 iter`. This is an approximate
+  intermediate owner read-out, not a final metric. Learned cross-stream
+  mixing was worse than the fixed control; the run was cancelled.
+- Interpretation: both PCHD variants were already far below PARSeg3 late in
+  training. Persistent decoder streams and learnable HyperConnection mixing
+  did not preserve the quality of the original FreqFusion path.
+- `FA-U-Mix`: code/config delivered and pushed in commit `4b0664c`; pending
+  training. It retains the complete FreqFusion path and adds a zero-gated,
+  coarse-to-fine U-Mix residual branch before the original Offset/PAL/AGCF
+  tail.
+- `PCQ`: code/config delivered and pushed in commit `4b0664c`; pending
+  training. It keeps FreqFusion and progressively updates the same class
+  queries over P5/fused-P4/fused-P3 before the original Offset/PAL/AGCF tail.
+
+## Reference tables (owner-supplied, 2026-07-27) -- USE THESE FOR ALL COMPARISONS
+
+OffSeg paper (ICCV 2025, Table 2; FLOPs @512x512 for ADE20K):
+  OffSeg-T  6.2M   5.3G   ADE20K 44.2   Cityscapes 78.9   COCO-Stuff 41.9
+  OffSeg-B  13.0M  10.3G  ADE20K 45.9   Cityscapes 80.5   COCO-Stuff 44.3
+  OffSeg-L  26.4M  17.1G  ADE20K 48.5   Cityscapes 81.6   COCO-Stuff 46.0
+
+Senior's PARSeg table (* = his own OffSeg reproduction, not the paper number):
+  OffSeg-T 6.22M  9.54G  43.75*  ->  PARSeg-T 8.98M  17.92G  45.25   (+1.50)
+  OffSeg-B 12.96M 14.88G 46.08*  ->  PARSeg-B 15.71M 23.26G  48.84   (+2.76)
+  OffSeg-L 26.41M 22.09G 48.49*  ->  PARSeg-L 29.17M 30.47G  49.67   (+1.18)
+  Increase is CONSTANT across scales: +2.75M params, +8.38G FLOPs.
+
+Notes:
+- +2.75M confirms the independent estimate of the PARSeg branch cost
+  (2 x 1800 x 256 queries = 0.92M, FFN 256<->2048 = 1.05M, attention +
+  projections + proto/route/AGCF). The branch is backbone-independent, which
+  is why the delta is identical at T/B/L; it pays off most at B (+2.76).
+- FLOPs conventions differ between the two tables (OffSeg-B 10.3G vs 14.88G),
+  so FLOPs must be compared WITHIN one table only.
+- Owner ruling on baselines: take the LOWER of {paper, reproduction} as the
+  reference. For ADE20K-B that is 45.9 (paper), not 46.08 (senior's repro).
+- CAVEAT ON FILE: this repo reproduces PARSeg-B at 48.17, i.e. 0.67 BELOW the
+  senior's 48.84, so this environment appears to run systematically low. An
+  environment-matched OffSeg-B would therefore likely land below 45.9-46.08,
+  which would make our own deltas LARGER, not smaller. Never measured.
+
+## Own-decoder line (generation series): OffSeg + our own second stage
+
+Motivation: every one of the ~30 previous attempts was "PARSeg3 + X" and is
+therefore structurally disqualified for the thesis (high overlap with the
+senior's work, small delta). This line inherits ONLY OffSeg (legitimately
+shared with the senior) and replaces the entire PARSeg3 second stage --
+attribute decoder, prototype calibration, routing, AGCF, +2.75M / +8.38G --
+with our own mechanism.
+
+- OffSeg-CCM (gen 1, T=1, rank 64, 0.11M): **46.8 final.**
+  vs OffSeg-B 45.9 = +0.9, i.e. ~40% of the senior's +2.27..+2.76 at ~1/25 of
+  the parameters.
+  Needle acc_ccm_gain converged to **0.20** against a tanh bound of 1.0 -> the
+  conditional metric IS used (zero-init gate pushed up and held), and the
+  output bound is NOT the limit; raising ccm_gain_scale would do nothing.
+  The predicted failure mode (context degenerating to a single class vector
+  late, driving gain to 0) did NOT occur.
+  Tail: 128k 46.65 / 144k 46.57 / 160k 46.79 -- FLAT, unlike LCR whose
+  endpoint was its peak. The mechanism saturated.
+- OffSeg-CCM2 (gen 2, T=3 fixed point + rank 192, 0.19M): RUNNING.
+- OffSeg-CCM2-T1 (capacity-only control, T=1 + rank 192): RUNNING in parallel.
+  The three points decompose gen 2 into iteration effect vs capacity effect,
+  which decides generation 3.
+
+## Evidence-axis runs: STOPPED (structurally disqualified, not underperforming)
+
+All three are "PARSeg3 + bolt-on" (overlap ~100), so no attainable number
+satisfies the thesis criteria. Recorded for completeness:
+- HRE  (stride-2 logit correction from native pixels): **47.77 final** (-0.40
+  vs base try1 48.17).
+- HRA  (stride-4 feature realignment): max **47.37** at 128k, run to 144k.
+- HRA2 (sub-pixel relocation field + geometric target): max **46.96** at 120k,
+  run to 128k.
+- Consistent with the snap-oracle bound measured this round: of the +16.41
+  boundary oracle at r=5, only +4.54 is RELOCATABLE (correct class already
+  predicted within 16 px); the rest is semantic. See probe_boundary_snap_oracle.
+- The mechanism (sub-token field unfolded from a token MLP + geometric target
+  read off the GT contour) is retained for possible reuse on OUR decoder.
+
+## New probe added this round
+
+- tools/probe_boundary_snap_oracle.py -- splits the boundary oracle into
+  relocatable vs semantic. Result (2000 val images, base 48.17):
+    band r=3: FULL +11.52 | SNAP@R=16 +4.01 (49.0% of band errors relocatable)
+    band r=5: FULL +16.41 | SNAP@R=16 +4.54 (41.3%)
+    band r=8: FULL +21.99 | SNAP@R=16 +4.38 (31.8%)
+  The FULL oracle scales with band width (it only measures how much of the
+  image is handed over); the SNAP oracle is FLAT across band widths, which is
+  why +4.5 is the number to design against. At R=4 (a short-reach offset
+  field) it is only +2.32 / +1.30 / +0.44.
+
+## CCM factorial read-out (2026-07-28) -- the conditional-metric family is CLOSED
+
+- gen 1  T=1 rank= 64 pixel ctx    46.80  (reference; ckpt lost, curve on file)
+- B ccm2t1 T=1 rank=192 pixel      46.88  -> capacity effect +0.08 (nothing)
+- A ccm2   T=3 rank= 64 pixel      46.19  -> depth effect -0.61 (iteration
+  amplifies immaturity early and never recovers; fixed-point axis dead here)
+- C ccms   T=1 rank= 64 +scene     46.46  -> pooled context -0.34 (pooled
+  presence through the metric generator is noise; independently reproduces
+  the dead active-class axis)
+- Conclusion: "re-measure the same evidence under a conditioned metric" tops
+  out at ~46.8-46.9 on OffSeg. More width / depth / pooled info all fail.
+  The family's value: +0.9 over OffSeg-B at 0.11M params (1/25 of the PARSeg3
+  branch), single-variable factorial, every arm attributable.
+
+## PRE-REGISTERED spatial-prior probe (written BEFORE first run, 2026-07-28)
+
+- tools/probe_spatial_prior.py: three decision-side hypotheses in one
+  training-free pass over existing ckpts (ccm2t1 46.88 and parseg3 try1
+  48.17): position structure (per-class row/col log-marginals, gpos),
+  presence prior (log mass share, gmass>0), macro logit-adjustment (gmass<0).
+- Predictions on file IN THE SCRIPT HEADER, fixed before any number:
+  (1) best combo on ccm2t1 = +0.1~0.4; below +0.15 kills the whole axis and
+  the fallback is a true second decision path + decorrelation;
+  (2) gpos gains concentrate on boundary/speckle, NOT interior present-conf;
+  (3) gmass>0 ~ zero or NEGATIVE for macro mIoU despite absent-FP being
+  42.6% of errors; (4) gpos should NOT reduce absent-FP much (normalised
+  marginals erase total mass; an FP blob supports itself) -- if it does, the
+  mechanism reasoning is wrong even if mIoU moves; (5) deltas on parseg3
+  SMALLER than on ccm2t1.
+- Build rule: only H-pos surviving builds a head (v1 = zero-init per-class
+  gamma on the separable log-prior, ~150 params, ~0 FLOPs, profiles from
+  detached stage-1). H-mass/H-cal do NOT get decoder chapters.
+
+## Spatial-prior probe READ-OUT (2026-07-28): AXIS DEAD per pre-registration
+
+- ccm2t1 (46.88 base): best +0.07 at gpos=0, gmass=-0.1 (pure macro
+  calibration; top gains all tail classes 149/148/133...). gpos carries ~0.
+- parseg3 try1 (48.17 base): best +0.01. Predictions confirmed: deltas tiny,
+  parseg3 < ccm2t1, gmass<0 the only live term, gpos dead.
+- Verdict (pre-registered, executed without reinterpretation): the spatial /
+  prior axis on this base is DEAD. Not worth a calibration table row at
+  +0.07. Probe cost ~1h; saved a 30h slot.
+
+## OffSeg-Dual DELIVERED (gen 3): second decision path, decorrelation thesis
+
+- Claim: the senior's +2.27 pays for a decorrelated second path + end-to-end
+  fusion, not for attribute semantics (PARSeg4/PAT/CAS all ~0; our single
+  path closed at +0.9; spatial prior dead).
+- A = OffSeg unchanged. B = mask-classification lite (150 queries, ONE
+  cross-attn layer over stride-16 tokens, dense product at stride 4). Gate =
+  entropy+disagreement conv, NOT detached (SAF lesson), bias -2 (~0.12 to
+  start, leaning on A). Error-focused CE on B where A is wrong (LTM lesson:
+  force different error pools). ~0.61M total = 4.5x smaller than the branch
+  it replaces. No CCM in v1 (clean attribution; stacking = v2).
+- Files: OffSegDual.py, offsegdual_ade20k_160k-512x512.py,
+  tools/offsegdual_sanity_forward.py.
+- PRE-REGISTERED prediction: +1.5~2.5 over 45.9 if the thesis is right
+  (i.e. 47.4-48.4); >= 48 = senior's gain substantially recovered at 1/4.5
+  params. Kill: 96k-128k clearly below ccm2t1 curve (46.88). Needles:
+  acc_dual_alpha (B earning trust) and acc_dual_disagree (-> 0 = paths
+  merged, thesis fails honestly).
+
+## Dual-NF read-out (2026-07-30): 46.69 -- and a wall becomes visible
+
+- Dual-NF (two-path structure, NO decorrelation pressure): 46.69 final
+  (+0.79 over OffSeg-B 45.9). Structure alone buys ~0.8.
+- THE WALL: three independent mechanisms now land within 0.2 of each other
+  -- CCM 46.80 (0.11M) / ccm2t1 46.88 (0.19M) / Dual-NF 46.69 (0.57M).
+  "OffSeg + one extra mechanism" saturates at ~46.8 regardless of mechanism,
+  the same shape as the old +0.5 ceiling on PARSeg3 at 48.7, relocated.
+  Hypothesis: all arms share one trait -- both paths read the same
+  feat_aligned; error correlation has a floor set at the EVIDENCE level.
+- Pending: Dual (with focus) vs 46.69 isolates the pressure effect; compare
+  acc_dual_disagree between the two runs (pressure must RAISE disagreement
+  or it is not doing its job). OL / C / M still in flight.
+- New arm launched into the freed slot: OffSegDualE -- path B's tokens from
+  the PRE-FUSION stride-32 scene stage instead of pooled fused features.
+  The fifth lever (evidence source), the only untested one, prime suspect
+  for the wall. Pre-registered: disagree clearly above Dual's and
+  mIoU >= Dual, else axis closed. Kill: 96k-128k below ccm2t1 curve.
+
+## Dual read-out (2026-07-31): 46.11 -- focus loss HURTS (-0.58 vs NF 46.69)
+
+- Pre-registered case three: the error-focused CE destabilises the weak B.
+  Third confirmation of the no-new-losses law (SDR dead, LDR killed, focus
+  -0.58). Upgraded to a design law in EXPERIMENTS.md.
+- In-flight arms (OL/C/M/E) stay valid: all carry focusw=0.5, single
+  variable vs Dual 46.11. Best arm gets a focusw=0 re-run afterwards.
+- NEW: EXPERIMENTS.md at repo root (git-tracked, syncs to server) = curated
+  conclusions ledger, updated every read-out round. This log stays the
+  append-only raw record.
+- Freed slot -> offsegaux: OffSeg-B + plain stage-3 FCN aux head (config
+  only, no second path). Devil's-advocate control, pre-registered: <=46.4
+  confirms the structure effect beyond supervision; >=46.6 means the
+  two-path story is deep supervision in disguise and the wall is a
+  supervision ceiling.
+- Pending needle from owner: acc_dual_alpha finals of Dual and NF (did the
+  gate engage at all, or did B act as a fancy aux head).

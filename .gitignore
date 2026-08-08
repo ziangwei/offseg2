@@ -129,6 +129,8 @@ pretrained/
 *.pt
 *.pkl
 *.log
+# Frozen historical ledger linked by THESIS_ROUTE.md / EXPERIMENTS.md.
+!PARSeg_experiment_summary.log
 .idea/
 .vscode/
 *.DS_Store

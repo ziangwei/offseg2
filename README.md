@@ -1,204 +1,56 @@
-# Revisiting Efficient Semantic Segmentation: Learning Offsets for Better Spatial and Class Feature Alignment (ICCV 2025)
+# offseg2：OffSeg 上的竞争感知图像自适应类几何
 
-### [Project page](https://github.com/HVision-NKU/OffSeg) | [Paper](https://mftp.mmcheng.net/Papers/25ICCV-OffsetLearning.pdf) | [arXiv](https://arxiv.org/abs/2508.08811) | [中译版](resources/25ICCV-OffsetLearning-cn.pdf) | [Jittor]()
+这是基于 [OffSeg / Offset Learning（ICCV 2025）](https://arxiv.org/abs/2508.08811)
+维护的硕士论文研究仓库。ADE20K 主实验固定 EfficientFormerV2-S2，不使用蒸馏或
+外部视觉语言模型。
 
-This repository contains the official Pytorch implementation of training & evaluation code and the trained models for [Offset Learning & OffSeg](https://arxiv.org/abs/2508.08811).
+当前方法沿同一个顺序判决链展开：
 
-### Offset Learning —— An efficient plug-and-play semantic segmentation paradigm that replaces existing per-pixel classification paradigm to boost performance with negligible parameters.
+```text
+OffSeg 动态类别中心
+→ CCM 竞争条件度量
+→ ACS 低秩仿射残差子空间
+→ IACS 单图类条件二阶度量
+→ competition-aware responsibility pooling
+```
 
-![Framework Overview](resources/framework.png)
-*Overview of the Offset Learning framework for semantic segmentation.*
+当前 ADE20K 单次最佳为 **47.79 mIoU**，配置：
+`local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_ade20k_160k-512x512.py`。
 
-<details>
-<summary>Abstract</summary>
-Offset Learning is a new semantic segmentation paradigm that efficiently learns feature offsets and class offsets to dynamically refine both spatial features and class representations, addressing the inherent misalignment problem in per-pixel classification. Based on this paradigm, we design OffSeg, an efficient segmentation network that delivers consistent accuracy improvements on multiple benchmarks. Notably, the Offset Learning paradigm is plug-and-play, allowing it to directly replace other segmentation paradigms in existing models to achieve performance gains with only negligible parameter overhead.
-</details>
+## 必读文档
 
-## Features
-* **Offset Learning**: Learns feature offsets and class offsets to dynamically refine spatial features and class representations.
-* **Plug-and-play**: Compatible with existing segmentation frameworks like SegFormer, SegNeXt, and Mask2Former.
-* **Lightweight & Efficient**: Achieves consistent accuracy gains on multiple benchmarks with negligible parameter overhead.
-* **Proven Effectiveness**: Validated across diverse models and datasets, showing strong improvements especially in lightweight settings.
+- [THESIS_ROUTE.md](THESIS_ROUTE.md)：唯一权威研究入口；包含约束、公式、贡献边界、
+  当前结论、代码地图和下一步。
+- [EXPERIMENTS.md](EXPERIMENTS.md)：带来源/阶段标签的实验事实账本。
+- [local_configs/offseg2/README.md](local_configs/offseg2/README.md)：当前有效配置索引
+  和训练命令。
+- [FORK_NOTES.md](FORK_NOTES.md)：上游来源、修改范围和许可说明。
 
-## News
-- **`2025.09.06`**: The [Chinese version](resources/25ICCV-OffsetLearning-cn.pdf) has been updated for Chinese readers.
-- **`2025.08.13`**: Add [tutorial](toturials/Toturial:Using_Offset_Learning_In_Your_Own_Model.md) on how to apply the Offset Learning paradigm to your own models.
-- **`2025.08.12`**: The full training & evaluation code & [Jittor version code](https://github.com/HVision-NKU/OffSeg/tree/jittor) and the trained models are released.
-- **`2025.06.26`**: Our paper is accepted to ICCV 2025!
+新会话或新协作者应先完整阅读 `THESIS_ROUTE.md`，不要从历史 PARSeg 配置、旧组会
+材料或 config 注释反推当前主线。
 
-## TODO
-* [x] Release the full training & evaluation code and model weights. 
-* [x] Tutorial on how to apply the Offset Learning paradigm to your own models.
-* [x] Release the jittor version for jittor users.
-* [ ] Release the Python library for easier installation via `pip install`.
-* [ ] Explore the generalization ability of Offset Learning on tasks beyond semantic segmentation.
+## 快速训练
 
-## Get Started
-
-### Installation
+ADE20K 当前主模型：
 
 ```bash
-conda create -n offseg python=3.9 -y
-conda activate offseg
-
-# Install PyTorch (CUDA 11.8 example)
-conda install pytorch==2.0.0 torchvision==0.15.0 torchaudio==2.0.0 pytorch-cuda=11.8 -c pytorch -c nvidia
-
-# install mmcv using mim
-pip install -U openmim
-mim install mmengine
-mim install mmcv==2.0.0
-mim install mmdet
-
-pip install ftfy transformers==4.28.0
-
-# Install OffSeg
-pip install -e .
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_ade20k_160k-512x512.py 4
 ```
 
-### Data Preparation
+当前三个待读出实验及独立 work directory 见
+[THESIS_ROUTE.md §12](THESIS_ROUTE.md#12-当前三个实验与判读规则)。
 
-For data preparation, please refer to the guidelines in [mmsegmentation](https://github.com/open-mmlab/mmsegmentation/blob/main/docs/en/user_guides/2_dataset_prepare.md#prepare-datasets).
-It is recommended to symlink the dataset root to `OffSeg/data`.
-
-<details>
-<summary>For convenience, the recommended folder structure is as follows: </summary>
-
-```
-OffSeg
-├── data
-│   ├── ade
-│   │   ├── ADEChallengeData2016
-│   │   │   ├── annotations
-│   │   │   │   ├── training
-│   │   │   │   ├── validation
-│   │   │   ├── images
-│   │   │   │   ├── training
-│   │   │   │   ├── validation
-│   ├── cityscapes
-│   │   ├── leftImg8bit
-│   │   │   ├── train
-│   │   │   ├── val
-│   │   ├── gtFine
-│   │   │   ├── train
-│   │   │   ├── val
-│   ├── coco_stuff164k
-│   │   ├── images
-│   │   │   ├── train2017
-│   │   │   ├── val2017
-│   │   ├── annotations
-│   │   │   ├── train2017
-│   │   │   ├── val2017
-│   ├── VOCdevkit
-│   │   ├── VOC2010
-│   │   │   ├── JPEGImages
-│   │   │   ├── SegmentationClassContext
-│   │   │   ├── ImageSets
-│   │   │   │   ├── SegmentationContext
-│   │   │   │   │   ├── train.txt
-│   │   │   │   │   ├── val.txt
-│   │   │   ├── trainval_merged.json
-```
-
-</details>
-
-### Checkpoints
-
-The trained models can be downloaded at:
-| Model                          | GoogleDrive | OneDrive | BaiduNetdisk |
-|--------------------------------|-------------|----------|--------------|
-| OffSeg                         | [GoogleDrive](https://drive.google.com/drive/folders/1RpQ1ouZJpiIPQU0nRpl9wGeOVoQ-_ZEy?usp=sharing) | [OneDrive](https://mailnankaieducn-my.sharepoint.com/:f:/g/personal/zhangshichen_mail_nankai_edu_cn/Er6Lo--3WIlCnj03f6xOzJkBhuJuNDpdBJoTsTJa0vbQgQ) | [BaiduNetdisk](https://pan.baidu.com/s/1iMyz_u46antonjauVuaXcg?pwd=2025) |
-| SegFormer w/ Offset Learning   | [GoogleDrive](https://drive.google.com/drive/folders/1IADpcyR6Ld1_kLmKF2FV9y_hwZtNUPOB?usp=sharing) | [OneDrive](https://mailnankaieducn-my.sharepoint.com/:f:/g/personal/zhangshichen_mail_nankai_edu_cn/EnE8OIJwszFPrf0yJcugkQABLjthQQzwJagbJm6rbK6IZw) | [BaiduNetdisk](https://pan.baidu.com/s/1yqil_EQkXJHokza5jNuGPg?pwd=2025) |
-| SegNeXt w/ Offset Learning     | [GoogleDrive](https://drive.google.com/drive/folders/1OHgoN3wpWmqEHdtqxyBCwCy5k7m_vZlJ?usp=sharing) | [OneDrive](https://mailnankaieducn-my.sharepoint.com/:f:/g/personal/zhangshichen_mail_nankai_edu_cn/Eif6LjQW145Lg-gAOnpwqWABnDIQvMRoeH6j5HiZd6MQzg) | [BaiduNetdisk](https://pan.baidu.com/s/1S8VadoubEPJj-vB2-lUIEg?pwd=2025) |
-| Mask2Former w/ Offset Learning | [GoogleDrive](https://drive.google.com/drive/folders/13bsb0XTtw1nXfPpmA4FThZ3j1ZZN8_PL?usp=sharing) | [OneDrive](https://mailnankaieducn-my.sharepoint.com/:f:/g/personal/zhangshichen_mail_nankai_edu_cn/Esv293NPghdMmnB6G36RY0UBi2lb6AeXAxYR4W_xwoy4jA) | [BaiduNetdisk](https://pan.baidu.com/s/1M7i7ETrIEZ-nLnbt96yTUg?pwd=2025) |
-
-## Evaluation
-
-### Single GPU Evaluation
+结构恒等性和梯度检查：
 
 ```bash
-# OffSeg-T on ADE20K
-python tools/test.py local_configs/offseg/Tiny/offseg-t_ade20k_160k-512x512.py /path/to/checkpoint.pth
-
-# SegFormer-B0 with Offset Learning on COCO-Stuff
-python tools/test.py local_configs/segformer_offset_learning/B0/segformer_mit-b0_offset_learning_8xb2-80k_stuff164k-512x512.py /path/to/checkpoint.pth
-
-# SegNeXt-T with Offset Learning on Pascal Context
-python tools/test.py local_configs/segnext_offset_learning/Tiny/segnext_mscan-t_offset_learning_80k_pascal-context-59_480x480.py /path/to/checkpoint.pth
+python tools/offseg_structural_sanity_forward.py
 ```
 
-### Multi-GPU Evaluation
+## 上游与引用
 
-```bash
-# Example with 8 GPUs
-bash tools/dist_test.sh local_configs/offseg/Tiny/offseg-t_ade20k_160k-512x512.py /path/to/checkpoint.pth 8
-```
+- Official repository: [HVision-NKU/OffSeg](https://github.com/HVision-NKU/OffSeg)
+- Paper: [Revisiting Efficient Semantic Segmentation: Learning Offsets for Better Spatial and Class Feature Alignment](https://arxiv.org/abs/2508.08811)
+- 本 fork 的上游 commit 和具体说明见 [FORK_NOTES.md](FORK_NOTES.md)。
 
-### Evaluation with Visualization
-
-```bash
-# Show results during evaluation
-python tools/test.py local_configs/offseg/Tiny/offseg-t_ade20k_160k-512x512.py /path/to/checkpoint.pth --show
-
-# Save visualization results
-python tools/test.py local_configs/offseg/Tiny/offseg-t_ade20k_160k-512x512.py /path/to/checkpoint.pth --show-dir ./vis_results
-```
-
-## Training
-
-### Single GPU Training
-
-```bash
-# Train OffSeg-B on ADE20K
-python tools/train.py local_configs/offseg/Base/offseg-b_ade20k_160k-512x512.py
-
-# Train with custom work directory
-python tools/train.py local_configs/offseg/Base/offseg-b_ade20k_160k-512x512.py --work-dir ./work_dirs/offseg-b_ade20k_160k-512x512
-
-# Resume training from checkpoint
-python tools/train.py local_configs/offseg/Base/offseg-b_ade20k_160k-512x512.py --resume
-```
-
-### Multi-GPU Training
-
-```bash
-# Example with 8 GPUs
-bash tools/dist_train.sh local_configs/offseg/Base/offseg-b_ade20k_160k-512x512.py 8
-```
-
-## Visualization
-
-### Image Demo
-
-```bash
-# Single image inference
-python demo/image_demo.py demo/demo.png local_configs/offseg/Tiny/offseg-t_ade20k_160k-512x512.py /path/to/checkpoint.pth --out-dir ./demo_results
-```
-
-## Citation
-
-If you find this work useful for your research, please cite our paper:
-
-```bibtex
-@article{zhang2025revisiting,
-  title={Revisiting Efficient Semantic Segmentation: Learning Offsets for Better Spatial and Class Feature Alignment},
-  author={Zhang, Shi-Chen and Li, Yunheng and Wu Yu-Huan and Hou, Qibin and Cheng, Ming-Ming},
-  journal={arXiv preprint arXiv:2508.08811},
-  year={2025}
-}
-```
-
-## Acknowledgment
-
-This project is built upon [MMSegmentation](https://github.com/open-mmlab/mmsegmentation). We thank the MMSegmentation team for their open-source contribution.
-We also thank the following open-source projects for their inspiring work: [SegFormer](https://github.com/NVlabs/SegFormer), [SegNeXt](https://github.com/visual-attention-network/segnext), [Mask2Former](https://github.com/facebookresearch/Mask2Former), [FreqFusion](https://github.com/Linwei-Chen/FreqFusion), [EfficientFormerV2](https://github.com/snap-research/EfficientFormer).
-
-
-## License
-The code is limited to non-commercial, academic, or research purposes only. For commercial use, please contact the authors for licensing.
-
-## Contact
-
-For questions and issues, please contact:
-- Email: [zhangshichen@mail.nankai.edu.cn]
-- Issues: [GitHub Issues](https://github.com/HVision-NKU/OffSeg/issues)
+使用或发表时必须引用 OffSeg 及实际复用的方法。许可与商业使用条件以仓库
+[LICENSE](LICENSE) 原文为准；不要把它简写成标准、无限制的 Apache-2.0。
