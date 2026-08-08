@@ -120,7 +120,9 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
                  assignment: str = 'spatial',
                  reliability_shrink: bool = False,
                  persistent_spectrum: bool = False,
-                 spectrum_scale: float = 0.5, eps: float = 1e-6):
+                 spectrum_scale: float = 0.5,
+                 learn_competition_strength: bool = False,
+                 competition_bound: float = 0.25, eps: float = 1e-6):
         super().__init__(num_classes=num_classes, embed_dims=embed_dims,
                          rank=rank, scale_init=scale_init, eps=eps)
         if not 0 < mix_init < 1:
@@ -149,6 +151,17 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
                 self.num_classes, self.rank))
         else:
             self.register_parameter('spectrum_raw', None)
+        if not 0 < competition_bound < 1:
+            raise ValueError('competition_bound must be in (0, 1)')
+        self.competition_bound = float(competition_bound)
+        if learn_competition_strength:
+            if self.assignment != 'posterior':
+                raise ValueError(
+                    'learned competition requires posterior assignment')
+            # Strength 1 is exactly the measured responsibility estimator.
+            self.competition_raw = nn.Parameter(torch.zeros(()))
+        else:
+            self.register_parameter('competition_raw', None)
         mix_logit = math.log(float(mix_init) / (1.0 - float(mix_init)))
         mix_shape = (self.num_classes,) if self.classwise_mix else ()
         self.mix_logit = nn.Parameter(torch.full(mix_shape, mix_logit))
@@ -161,6 +174,14 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
             self.spectrum_raw)
         return spectrum / spectrum.mean(dim=-1, keepdim=True).clamp_min(
             self.eps)
+
+    def competition_strength(self):
+        """Strength of cross-class competition used for moment assignment."""
+        if self.competition_raw is not None:
+            return 1.0 + self.competition_bound * torch.tanh(
+                self.competition_raw)
+        value = 1.0 if self.assignment == 'posterior' else 0.0
+        return self.raw_basis.new_tensor(value)
 
     def assignment_statistics(self, ccm_logits):
         """Return spatial weights and posterior spatial reliability.
@@ -176,8 +197,23 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
             assignment_tv = ccm_logits.new_zeros(())
             return spatial_weight, reliability, assignment_tv
         posterior = torch.softmax(ccm_logits, dim=2)
-        normaliser = posterior.sum(dim=1, keepdim=True).clamp_min(self.eps)
-        spatial_weight = posterior / normaliser
+        assignment_mass = posterior
+        if self.competition_raw is not None:
+            # posterior corresponds to strength=1.  This multiplicative form
+            # is exactly identity at initialisation, while continuously
+            # interpolating the class log-partition's influence on spatial
+            # moment assignment.  Centre logZ only for numerical range; the
+            # removed per-image constant cancels in spatial normalisation.
+            strength = self.competition_strength()
+            log_partition = torch.logsumexp(
+                ccm_logits, dim=2, keepdim=True)
+            log_partition = log_partition - log_partition.mean(
+                dim=1, keepdim=True)
+            factor = torch.exp(-(strength - 1.0) * log_partition)
+            assignment_mass = posterior * factor
+        normaliser = assignment_mass.sum(
+            dim=1, keepdim=True).clamp_min(self.eps)
+        spatial_weight = assignment_mass / normaliser
         spatial_reference = torch.softmax(ccm_logits, dim=1)
         assignment_tv = 0.5 * (
             spatial_weight - spatial_reference).abs().sum(dim=1).mean()
@@ -203,9 +239,17 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
                 'ccm_logits must have shape [B,HW,K] matching projection')
 
         if self.detach_statistics:
-            with torch.no_grad():
+            stats_logits = ccm_logits.detach()
+            if self.competition_raw is None:
+                with torch.no_grad():
+                    spatial_weight, reliability, assignment_tv = (
+                        self.assignment_statistics(
+                            stats_logits))                         # [B,N,K]
+            else:
+                # Keep logits/projections detached while allowing the single
+                # competition-strength parameter to learn through the metric.
                 spatial_weight, reliability, assignment_tv = (
-                    self.assignment_statistics(ccm_logits))       # [B,N,K]
+                    self.assignment_statistics(stats_logits))
             stats_projection = projection.detach()
         else:
             spatial_weight, reliability, assignment_tv = (
@@ -256,6 +300,8 @@ class ImageAdaptiveAffineClassSubspace(AffineClassSubspace):
             iacs_reliability_min=reliability.min(),
             iacs_reliability_max=reliability.max(),
             iacs_assignment_tv=assignment_tv,
+            iacs_competition_strength=(
+                self.competition_strength().detach()),
         )
         return metric, mix, anisotropy, statistics
 
@@ -356,6 +402,8 @@ class OffSegCCMIACS(OffSegCCMACS):
                  iacs_reliability_shrink=False,
                  iacs_persistent_spectrum=False,
                  iacs_spectrum_scale=0.5,
+                 iacs_learn_competition_strength=False,
+                 iacs_competition_bound=0.25,
                  **kwargs):
         super().__init__(
             in_channels=in_channels,
@@ -382,7 +430,10 @@ class OffSegCCMIACS(OffSegCCMACS):
             assignment=iacs_assignment,
             reliability_shrink=bool(iacs_reliability_shrink),
             persistent_spectrum=bool(iacs_persistent_spectrum),
-            spectrum_scale=float(iacs_spectrum_scale))
+            spectrum_scale=float(iacs_spectrum_scale),
+            learn_competition_strength=bool(
+                iacs_learn_competition_strength),
+            competition_bound=float(iacs_competition_bound))
 
     def _subspace_correction(self, metric_feat, centres, ccm_logits):
         raw_correction, scale, mix, anisotropy, statistics = self.acs(
@@ -418,6 +469,8 @@ class OffSegCCMIACS(OffSegCCMACS):
             seg_logits['iacs_reliability_max'].detach())
         losses['acc_iacs_assignment_tv'] = (
             seg_logits['iacs_assignment_tv'].detach())
+        losses['acc_iacs_competition_strength'] = (
+            seg_logits['iacs_competition_strength'].detach())
         losses['acc_iacs_spectrum_std'] = (
             seg_logits['iacs_spectrum_std'].detach())
         losses['acc_iacs_spectrum_min'] = (

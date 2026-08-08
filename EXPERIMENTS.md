@@ -61,3 +61,38 @@ decoder 换骨、证据轴挂件(HRE 47.77 / HRA 47.37 / HRA2 46.96,机制保留
 > 拷本地盘,共享存储 data_time 事故")已删除 —— 那两条规则和它们引用的两起"事故"都是
 > 助手臆造的,从未发生。原第 2 条也被抬高成了"铁律",实际只是倾向。本文件的叙事部分
 > (三幕主线、本节、"已关闭的轴")均为助手撰写,引用前需核对来源;结果表中的数字是真实读数。
+
+## ACS / IACS 线阶段读数（2026-08-09）
+
+| 模型 | ADE20K mIoU | 相对 IACS-r4 | 判定 |
+|---|---:|---:|---|
+| ACS-r4 | 47.24 | -0.17 | 静态仿射类子空间有正信号 |
+| ACS-r8 | 47.22 | -0.19 | 加 rank 无收益 |
+| IACS-r4 | 47.41 | 0.00 | 单图二阶度量基准 |
+| IACS-r8 | 46.76 | -0.65 | 容量扩大有害 |
+| IACS-r4 top-3 | 47.08 | -0.33 | 硬候选删除有效修正 |
+| IACS-r4 top-3 + classwise mix | 45.92 | -1.49 | 组合失败；因同时改变 top-3、classwise 与 mix 初始化，不能单独归因 |
+| centered | 46.91 | -0.50 | 去掉残差均值外积有害 |
+| centered + responsibility | 47.13 | -0.28 | 竞争责任度在 centered 条件下追回 +0.22 |
+| centered + responsibility + reliability | 46.67 | -0.74 | 后验尖锐度不是统计可靠性 |
+| persistent spectrum | 47.32 | -0.09 | 静态方向曲率无增益 |
+| **responsibility** | **47.79** | **+0.38** | **当前成品；首次超过 47.5 目标** |
+| responsibility + spectrum | 47.09 | -0.32 | spectrum 与动态责任度明确冲突（相对赢家 -0.70） |
+
+Responsibility 最终 needle：`ccm_gain=0.1737`、`acs_scale=0.1941`、
+`raw_move=0.9232`、`mix=0.9624`、`anisotropy=0.6923`、
+`effective_support=4660.7`、`assignment_tv=0.4576`。对比原 IACS-r4 的
+`move=0.7539 / mix=0.9569 / anisotropy=0.6420`，收益伴随一次实质性的
+像素责任度重分配，以及更强、更有方向性的单图二阶修正；不是 CCM gain
+变大（它反而从约 0.2025 降到 0.1737）。
+
+赢家上的 `reliability_mean=0.0262`（min 0 / max 0.9834）揭示：若启用该
+收缩，它会把约 0.96 的动态图像 metric mix 平均压到约 0.025；从其分布看，
+同时仍可能信任少数高置信尖峰。这与 reliable 变体的失败方向一致，但不是
+对失败因果的单独证明。此轴关闭。`residual_mean=0` 是 uncentered 快路径未计算该
+诊断时的占位值，不代表真实残差均值为零。
+
+下一步：一个 ADE 槽只校准 responsibility 的全局竞争强度（从强度 1
+恒等起步，范围 0.75–1.25）；另两个槽在 COCO-Stuff164K 上复现 OffSeg-T/B，
+统一 80k、每 4000 iter 验证和保存。主模型仍是零新损失、单路的
+responsibility-IACS；竞争强度实验只作为估计器精修，不单列为主创新。

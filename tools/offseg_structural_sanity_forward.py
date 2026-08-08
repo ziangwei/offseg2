@@ -287,6 +287,59 @@ def main():
                     float((spatial_shift - spatial_base).abs().max())
                     < 1e-7)
 
+    calibrated = ImageAdaptiveAffineClassSubspace(
+        num_classes=5, embed_dims=32, rank=4,
+        assignment='posterior', learn_competition_strength=True,
+        competition_bound=0.25)
+    load_result = calibrated.load_state_dict(
+        responsibility.state_dict(), strict=False)
+    calibrated_weight = calibrated.assignment_weights(moment_logits)
+    responsibility_metric, _, _, _ = responsibility.image_metric(
+        moment_projection, moment_logits)
+    calibrated_metric, _, _, calibrated_statistics = calibrated.image_metric(
+        moment_projection, moment_logits)
+    all_ok &= check('competition strength adds exactly one parameter',
+                    sum(p.numel() for p in calibrated.parameters()) -
+                    sum(p.numel() for p in
+                        responsibility.parameters()) == 1)
+    all_ok &= check('strength one is exact responsibility identity',
+                    load_result.missing_keys == ['competition_raw'] and
+                    not load_result.unexpected_keys and
+                    torch.equal(calibrated_weight, responsibility_weight) and
+                    torch.equal(calibrated_metric, responsibility_metric) and
+                    float(calibrated_statistics[
+                        'iacs_competition_strength']) == 1.0)
+
+    detached_projection = moment_projection.clone().requires_grad_()
+    detached_logits = moment_logits.clone().requires_grad_()
+    trainable_metric, _, _, _ = calibrated.image_metric(
+        detached_projection, detached_logits)
+    trainable_metric[..., 0, 0].mean().backward()
+    all_ok &= check('only competition strength learns through statistics',
+                    calibrated.competition_raw.grad is not None and
+                    bool(torch.isfinite(calibrated.competition_raw.grad)) and
+                    float(calibrated.competition_raw.grad.abs()) > 0 and
+                    detached_projection.grad is None and
+                    detached_logits.grad is None)
+
+    with torch.no_grad():
+        calibrated.competition_raw.fill_(1.0)
+    strong_strength = calibrated.competition_strength()
+    strong_weight = calibrated.assignment_weights(moment_logits)
+    with torch.no_grad():
+        calibrated.competition_raw.fill_(-1.0)
+    weak_strength = calibrated.competition_strength()
+    weak_weight = calibrated.assignment_weights(moment_logits)
+    all_ok &= check('bounded competition changes valid responsibilities',
+                    0.75 < float(weak_strength.detach()) < 1.0 and
+                    1.0 < float(strong_strength.detach()) < 1.25 and
+                    float((weak_weight.sum(dim=1) - 1).abs().max().detach())
+                    < 1e-6 and
+                    float((strong_weight.sum(dim=1) - 1).abs().max().detach())
+                    < 1e-6 and
+                    float((strong_weight - weak_weight).abs().max().detach())
+                    > 1e-5)
+
     combined = ImageAdaptiveAffineClassSubspace(
         num_classes=5, embed_dims=32, rank=4,
         center_statistics=True, assignment='posterior')
