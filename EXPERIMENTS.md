@@ -119,9 +119,10 @@ keep_ratio           1.0000
 | Config | 规模 | mIoU | 来源/阶段 | 结论 |
 |---|---|---:|---|---|
 | `Tiny/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py` | T / EfficientFormerV2-S1 | **42.08** | owner-final，单次 run | 首个 Stuff 结果；相对 OffSeg-T paper 41.9 的 +0.18 不是配对增益 |
+| `Base/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py` | B / EfficientFormerV2-S2 | **44.33** | owner-final，单次 run | 相对 OffSeg-B paper 44.3 的 +0.03 不是配对增益 |
 
-Stuff-B 尚无最终读数。本环境 OffSeg-T 配对基线也未完成，因此不能据 42.08 宣称
-responsibility 在 Stuff164K 上带来稳定提升。
+本环境 OffSeg-T/B 配对基线均未完成，因此不能据 42.08/44.33 宣称 responsibility
+在 Stuff164K 上带来稳定提升。两个绝对值只说明当前配置在 T/B 两个规模上的单次结果。
 
 ## 5. 其他 OffSeg 路线
 
@@ -197,7 +198,6 @@ PARSeg3Aux、LCRAux、LTX、FA-U-Mix、PCQ、HC2-S34。配置存在不等于完�
 |---|---|---|---|
 | ADE dynamic residual filter | `Base/offsegccmdrf_r4_ade20k_160k-512x512.py` | 用 masked-GAP→动态1×1残差滤波替换完整 IACS 矩阵 | ≥47.79 候选主模型；47.5–47.78 简化版；<47.5 拒绝 |
 | ADE competition strength | `Base/offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py` | 从 α=1 winner 恒等起步，只校准责任竞争强度 | <约+0.10或α≈1则删除 |
-| Stuff-B responsibility | `Base/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py` | 跨数据集/同S2泛化 | 80k，val/ckpt 4k |
 
 较早的非-responsibility IACS Stuff T/B 配置存在，但用户已明确暂不训练。
 
@@ -208,7 +208,7 @@ PARSeg3Aux、LCRAux、LTX、FA-U-Mix、PCQ、HC2-S34。配置存在不等于完�
 - 47.79 checkpoint 的验证集聚合 needle 与逐类/混淆变化；
 - 全模型 Params、统一 FLOPs、latency、吞吐和峰值显存；
 - `OffSeg + ACS/IACS（去 CCM）` 控制；
-- Stuff-B 方法结果及本环境配对 OffSeg T/B；
+- Stuff 本环境配对 OffSeg T/B；
 - 当前 checkpoint/日志的持久路径和 seed 记录。
 
 ## 9. 新结果追加模板

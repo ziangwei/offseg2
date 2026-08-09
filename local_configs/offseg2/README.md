@@ -18,7 +18,7 @@ Base/offsegccmiacs_r4_responsibility_ade20k_160k-512x512.py
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_ade20k_160k-512x512.py 4
 ```
 
-## 当前 config-ready 实验
+## 当前实验与可复现配置
 
 ### ADE 动态残差滤波结构替换
 
@@ -41,7 +41,8 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 
 ### COCO-Stuff164K 泛化
 
-T 配置的用户报告单次最终结果为 **42.08 mIoU**；B 仍为 config-ready。
+T/B 配置的用户报告单次最终结果分别为 **42.08/44.33 mIoU**。两者都没有本环境
+OffSeg 配对基线，不能把相对论文 41.9/44.3 的差写成严格增益。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Tiny/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py 4

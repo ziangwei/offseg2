@@ -5,8 +5,8 @@
 > 当前结论：ADE20K 单次最佳为 **47.79 mIoU**，对应
 > `OffSegCCMIACS-r4 + non-centered responsibility`。
 >
-> 当前状态：COCO-Stuff164K responsibility-T 已完成并得到 **42.08 mIoU**；
-> ADE 动态残差滤波、竞争强度校准与 Stuff-B 泛化均为 config-ready，尚无最终结果报告。
+> 当前状态：COCO-Stuff164K responsibility-T/B 已完成，分别为 **42.08/44.33 mIoU**；
+> ADE 动态残差滤波与竞争强度校准为 config-ready，尚无最终结果报告。
 >
 > 代码分支：`main`。47.79 对应的训练 commit、seed、checkpoint/log 持久路径尚未登记；
 > 不得自动假设当前 HEAD 与原训练现场完全相同。
@@ -143,10 +143,12 @@ OffSeg 论文给出的 Stuff 参考值为 T 41.9、B 44.3；在没有本环境�
 |---|---|---:|---|
 | OffSeg-T | T / EfficientFormerV2-S1 | 41.9 | paper reference |
 | responsibility-IACS-r4 | T / EfficientFormerV2-S1 | **42.08** | owner-final，单次 run |
+| OffSeg-B | B / EfficientFormerV2-S2 | 44.3 | paper reference |
+| responsibility-IACS-r4 | B / EfficientFormerV2-S2 | **44.33** | owner-final，单次 run |
 
-`42.08 - 41.9 = 0.18` 是跨环境参考差，不是配对增益。Stuff-B 尚无最终读数；因此
-当前结果只证明该配置能在 Stuff164K-T 正常训练并达到 42.08，尚不能证明跨数据集或
-跨规模泛化增益成立。
+`42.08 - 41.9 = 0.18` 与 `44.33 - 44.3 = 0.03` 都是跨环境参考差，不是配对增益。
+当前结果证明两个配置能在 Stuff164K T/B 达到上述单次绝对值；在本环境 OffSeg-T/B
+配对基线完成前，不能证明跨数据集或跨规模泛化增益成立。
 
 ## 5. OffSeg 地基
 
@@ -464,7 +466,7 @@ a_ic(α) ∝ exp(logit_ic - α logsumexp_c(logit_i))
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py 4
 ```
 
-### 12.2 Stuff164K：T 已完成，B 待结果
+### 12.2 Stuff164K：T/B 已完成
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Tiny/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py 4
@@ -479,9 +481,8 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 - T：`work_dirs/offsegccmiacs_r4_responsibility_t_stuff164k_80k-512x512`
 - B：`work_dirs/offsegccmiacs_r4_responsibility_b_stuff164k_80k-512x512`
 
-T 配置的用户报告单次最终结果为 **42.08 mIoU**。B 仍为 config-ready/待报告状态。
-如果同一节点并发运行，还必须设置不同 `PORT`。在没有本环境 OffSeg-T/B 配对基线且
-B 尚未完成前，不得写“已证明泛化提升”。
+T/B 配置的用户报告单次最终结果分别为 **42.08/44.33 mIoU**。如果同一节点并发运行，
+还必须设置不同 `PORT`。在没有本环境 OffSeg-T/B 配对基线前，不得写“已证明泛化提升”。
 
 ### 12.3 ADE：动态残差滤波结构替换
 
@@ -551,7 +552,7 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-
 
 优先级从高到低：
 
-1. 读出 ADE dynamic-residual-filter、competition-strength 与 Stuff-B 的最终结果；
+1. 读出 ADE dynamic-residual-filter 与 competition-strength 的最终结果；
 2. 在同一环境跑 OffSeg-B 配对基线，停止使用“取低基线”做法；
 3. 对 47.79 主模型至少补多 seed 或一次独立复跑，报告均值/方差；
 4. 用同一工具统计全模型 Params、FLOPs，并测同硬件 latency/吞吐；
