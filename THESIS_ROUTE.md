@@ -5,7 +5,8 @@
 > 当前结论：ADE20K 单次最佳为 **47.79 mIoU**，对应
 > `OffSegCCMIACS-r4 + non-centered responsibility`。
 >
-> 当前状态：ADE 竞争强度校准、COCO-Stuff164K T/B 泛化配置已就绪，尚无结果报告。
+> 当前状态：COCO-Stuff164K responsibility-T 已完成并得到 **42.08 mIoU**；
+> ADE 动态残差滤波、竞争强度校准与 Stuff-B 泛化均为 config-ready，尚无最终结果报告。
 >
 > 代码分支：`main`。47.79 对应的训练 commit、seed、checkpoint/log 持久路径尚未登记；
 > 不得自动假设当前 HEAD 与原训练现场完全相同。
@@ -135,6 +136,17 @@ Responsibility：用跨类竞争后的像素责任度估计该二阶几何
 
 OffSeg 论文给出的 Stuff 参考值为 T 41.9、B 44.3；在没有本环境匹配基线前，仍只能
 视为 paper reference。
+
+当前跨数据集结果：
+
+| 模型 | 规模 | mIoU | 来源与口径 |
+|---|---|---:|---|
+| OffSeg-T | T / EfficientFormerV2-S1 | 41.9 | paper reference |
+| responsibility-IACS-r4 | T / EfficientFormerV2-S1 | **42.08** | owner-final，单次 run |
+
+`42.08 - 41.9 = 0.18` 是跨环境参考差，不是配对增益。Stuff-B 尚无最终读数；因此
+当前结果只证明该配置能在 Stuff164K-T 正常训练并达到 42.08，尚不能证明跨数据集或
+跨规模泛化增益成立。
 
 ## 5. OffSeg 地基
 
@@ -429,7 +441,7 @@ TAM-NT 没有结果，因此不能断言文本内容是否必要。PARSeg 仍是
 借用已发表模块可以作为基线或性能组件，但不能单独构成本项目原创。EV5 46.29、SRG
 46.72 没有正结果；NMF 未跑。它们保留为历史代码，不进入当前贡献链。
 
-## 12. 当前三个实验与判读规则
+## 12. 当前实验与判读规则
 
 ### 12.1 ADE：responsibility 竞争强度校准
 
@@ -452,7 +464,7 @@ a_ic(α) ∝ exp(logit_ic - α logsumexp_c(logit_i))
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py 4
 ```
 
-### 12.2 Stuff164K：T/B 泛化
+### 12.2 Stuff164K：T 已完成，B 待结果
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Tiny/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py 4
@@ -467,8 +479,41 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 - T：`work_dirs/offsegccmiacs_r4_responsibility_t_stuff164k_80k-512x512`
 - B：`work_dirs/offsegccmiacs_r4_responsibility_b_stuff164k_80k-512x512`
 
-如果同一节点并发运行，还必须设置不同 `PORT`。当前只有 config-ready 状态；收到用户
-最终读数前不得写“已完成泛化验证”。
+T 配置的用户报告单次最终结果为 **42.08 mIoU**。B 仍为 config-ready/待报告状态。
+如果同一节点并发运行，还必须设置不同 `PORT`。在没有本环境 OffSeg-T/B 配对基线且
+B 尚未完成前，不得写“已证明泛化提升”。
+
+### 12.3 ADE：动态残差滤波结构替换
+
+配置：
+`local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-512x512.py`
+
+这是一个 `config-ready` 的结构替换实验，不是已经获得正结果的方法。它保留 CCM、
+ACS-r4 类残差响应和 post-CCM competitive soft masks，但删除 IACS 的完整 scatter
+matrix、trace normalization、identity matrix mix、spectrum 和 quadratic matrix
+scoring。实际计算图为：
+
+```text
+四个 class-relative residual responses
+  → competitive soft-mask weighted GAP
+  → RMS-normalised per-image class residual filter
+  → dynamic 1×1 correlation response
+  → response energy residual-adds to ACS energy
+  → the same final class logit
+```
+
+设计假设来自单次受控结果：`centered+responsibility=47.13`，而
+`non-centered+responsibility=47.79`。这提示 non-centered moment 中的共同残差轴
+值得被单独保留，但不能在新结果出来前把 0.66 差值全部归因于该残差轴。动态滤波器由
+masked mean 与 residual RMS 构造；低一致性残差产生弱滤波响应，ACS 主响应始终完整
+保留。模型只新增一个全局 filter-gain 标量，不增加分支、损失或外部信息。
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-512x512.py 4 --work-dir work_dirs/offsegccmdrf_r4_ade20k_160k-512x512
+```
+
+判读：达到或超过 47.79 才能取代当前主模型；47.5–47.78 可作为更直观的结构简化版；
+低于 47.5 则拒绝该替换，不继续在其上叠加 SE 或其他模块。
 
 ## 13. 论文写作框架
 
@@ -506,7 +551,7 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 
 优先级从高到低：
 
-1. 读出当前三个 config-ready 实验；
+1. 读出 ADE dynamic-residual-filter、competition-strength 与 Stuff-B 的最终结果；
 2. 在同一环境跑 OffSeg-B 配对基线，停止使用“取低基线”做法；
 3. 对 47.79 主模型至少补多 seed 或一次独立复跑，报告均值/方差；
 4. 用同一工具统计全模型 Params、FLOPs，并测同硬件 latency/吞吐；
@@ -529,9 +574,11 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 | Offset Learning | `mmseg/models/decode_heads/offset_learning.py` |
 | CCM | `mmseg/models/decode_heads/OffSegCCM.py` |
 | ACS / IACS / responsibility | `mmseg/models/decode_heads/OffSegACS.py` |
+| Dynamic residual filter | `mmseg/models/decode_heads/OffSegRDF.py` |
 | 结构恒等性与梯度测试 | `tools/offseg_structural_sanity_forward.py` |
 | ADE winner config | `local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_ade20k_160k-512x512.py` |
 | ADE competition config | `local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py` |
+| ADE dynamic-filter config | `local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-512x512.py` |
 | Stuff-T config | `local_configs/offseg2/Tiny/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py` |
 | Stuff-B config | `local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py` |
 | 结果账本 | `EXPERIMENTS.md` |

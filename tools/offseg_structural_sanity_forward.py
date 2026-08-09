@@ -1,6 +1,7 @@
 """CPU sanity checks for ACS and SRG; no dataset or mmcv required."""
 
 import importlib.util
+import math
 from pathlib import Path
 import sys
 import types
@@ -39,7 +40,7 @@ def _load_components():
     sys.modules['mmseg.models.decode_heads.OffSegCCM'] = parent
 
     loaded = {}
-    for short_name in ('OffSegACS', 'OffSegSRG'):
+    for short_name in ('OffSegACS', 'OffSegRDF', 'OffSegSRG'):
         qualified = f'mmseg.models.decode_heads.{short_name}'
         path = root / 'mmseg' / 'models' / 'decode_heads' / f'{short_name}.py'
         spec = importlib.util.spec_from_file_location(qualified, path)
@@ -50,11 +51,13 @@ def _load_components():
     return (loaded['OffSegACS'].restrict_correction_to_topk,
             loaded['OffSegACS'].AffineClassSubspace,
             loaded['OffSegACS'].ImageAdaptiveAffineClassSubspace,
+            loaded['OffSegRDF'].ResponsibilityGuidedResidualFilter,
             loaded['OffSegSRG'].SemanticResidualRegionGraph)
 
 
 restrict_correction_to_topk, AffineClassSubspace, \
     ImageAdaptiveAffineClassSubspace, \
+    ResponsibilityGuidedResidualFilter, \
     SemanticResidualRegionGraph = _load_components()
 
 
@@ -407,7 +410,109 @@ def main():
                     sum(parameter.numel() for parameter in
                         centered.parameters()))
 
-    print('6) semantic residual region graph')
+    print('6) responsibility-guided dynamic residual filter')
+    drf_feat = torch.randn(2, 17, 32, requires_grad=True)
+    drf_centres = torch.randn(2, 5, 32, requires_grad=True)
+    drf_logits = torch.randn(2, 17, 5, requires_grad=True)
+    drf = ResponsibilityGuidedResidualFilter(
+        num_classes=5, embed_dims=32, rank=4,
+        scale_init=0.05, gain_init=0.10,
+        detach_template=True)
+    drf_correction, drf_scale, drf_gain, drf_statistics = drf(
+        drf_feat, drf_centres, drf_logits)
+    drf_projection = drf.project_residual(drf_feat, drf_centres)
+    drf_weight = drf.responsibility_weights(drf_logits.detach())
+    manual_template = torch.einsum(
+        'bnk,bnkr->bkr', drf_weight, drf_projection.detach())
+    manual_power = torch.einsum(
+        'bnk,bnk->bk', drf_weight,
+        drf_projection.detach().square().sum(dim=-1))
+    manual_filter = (
+        math.sqrt(4) * manual_template /
+        (manual_power + drf.eps).sqrt().unsqueeze(-1))
+    manual_base = drf_projection.square().sum(dim=-1)
+    manual_response = (
+        drf_projection * manual_filter[:, None, :, :]).sum(dim=-1)
+    manual_correction = 0.5 * (
+        manual_base + drf_gain * manual_response.square()
+    ) * drf_scale.view(1, 1, -1)
+    manual_coherence = (
+        manual_template.square().sum(dim=-1) /
+        (manual_power + drf.eps))
+    all_ok &= check('DRF correction shape and finite diagnostics',
+                    drf_correction.shape == (2, 17, 5) and
+                    bool(torch.isfinite(drf_correction).all()) and
+                    all(torch.isfinite(value) for value in
+                        drf_statistics.values()))
+    all_ok &= check('DRF is the measured masked-filter computation',
+                    float((drf_correction - manual_correction).abs().max()
+                          .detach()) < 1e-6)
+    all_ok &= check('DRF gain initialises as configured',
+                    abs(float(drf_gain.detach()) - 0.10) < 1e-6)
+    all_ok &= check('responsibilities normalise over space',
+                    float((drf_weight.sum(dim=1) - 1).abs().max()) < 1e-6)
+    all_ok &= check('RMS template coherence is Cauchy-bounded',
+                    float(manual_coherence.min()) >= 0.0 and
+                    float(manual_coherence.max()) <= 1.0 + 1e-6)
+
+    symmetric_projection = torch.zeros(1, 2, 5, 4)
+    symmetric_projection[:, 0, :, 0] = 2.0
+    symmetric_projection[:, 1, :, 0] = -2.0
+    symmetric_logits = torch.zeros(1, 2, 5)
+    symmetric_filter, symmetric_statistics = drf.gather_filter(
+        symmetric_projection, symmetric_logits)
+    all_ok &= check('cancelling residuals give an exact ACS fallback',
+                    float(symmetric_filter.abs().max()) == 0.0 and
+                    float(symmetric_statistics['drf_coherence']) == 0.0)
+    try:
+        drf.gather_filter(
+            torch.randn(1, 3, 5, 4), torch.randn(1, 4, 5))
+    except ValueError:
+        bad_shape_rejected = True
+    else:
+        bad_shape_rejected = False
+    all_ok &= check('DRF rejects mismatched logits', bad_shape_rejected)
+
+    drf_correction.mean().backward()
+    all_ok &= check('DRF trains basis, scale and filter gain',
+                    drf.raw_basis.grad is not None and
+                    bool(torch.isfinite(drf.raw_basis.grad).all()) and
+                    float(drf.raw_basis.grad.abs().sum()) > 0 and
+                    drf.log_scale.grad is not None and
+                    bool(torch.isfinite(drf.log_scale.grad).all()) and
+                    float(drf.log_scale.grad.abs().sum()) > 0 and
+                    drf.gain_logit.grad is not None and
+                    bool(torch.isfinite(drf.gain_logit.grad)) and
+                    float(drf.gain_logit.grad.abs()) > 0)
+    all_ok &= check('detached gather blocks only the logits path',
+                    drf_logits.grad is None and
+                    drf_feat.grad is not None and
+                    float(drf_feat.grad.abs().sum()) > 0 and
+                    drf_centres.grad is not None and
+                    float(drf_centres.grad.abs().sum()) > 0)
+
+    live_drf = ResponsibilityGuidedResidualFilter(
+        num_classes=5, embed_dims=32, rank=4,
+        detach_template=False)
+    live_feat = torch.randn(1, 9, 32, requires_grad=True)
+    live_centres = torch.randn(1, 5, 32, requires_grad=True)
+    live_logits = torch.randn(1, 9, 5, requires_grad=True)
+    live_correction, _, _, _ = live_drf(
+        live_feat, live_centres, live_logits)
+    live_correction.mean().backward()
+    all_ok &= check('non-detached gather exposes the logits path',
+                    live_logits.grad is not None and
+                    bool(torch.isfinite(live_logits.grad).all()) and
+                    float(live_logits.grad.abs().sum()) > 0)
+    small_acs = AffineClassSubspace(
+        num_classes=5, embed_dims=32, rank=4)
+    all_ok &= check('DRF adds exactly one scalar to ACS',
+                    sum(parameter.numel() for parameter in
+                        drf.parameters()) -
+                    sum(parameter.numel() for parameter in
+                        small_acs.parameters()) == 1)
+
+    print('7) semantic residual region graph')
     residual = torch.randn(batch, channels, height, width,
                            requires_grad=True)
     srg = SemanticResidualRegionGraph(
@@ -434,9 +539,13 @@ def main():
 
     n_acs = sum(parameter.numel() for parameter in acs.parameters())
     n_iacs = sum(parameter.numel() for parameter in iacs.parameters())
+    full_drf = ResponsibilityGuidedResidualFilter(
+        num_classes=classes, embed_dims=channels, rank=4)
+    n_drf = sum(parameter.numel() for parameter in full_drf.parameters())
     n_srg = sum(parameter.numel() for parameter in srg.parameters())
     print(f'    ACS: {n_acs / 1e6:.3f} M parameters')
     print(f'   IACS: {n_iacs / 1e6:.3f} M parameters')
+    print(f'    DRF: {n_drf / 1e6:.3f} M parameters')
     print(f'    SRG: {n_srg / 1e6:.3f} M parameters')
     print('=' * 62)
     print('ALL PASS' if all_ok else 'SOMETHING FAILED -- do not launch')

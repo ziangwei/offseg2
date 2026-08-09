@@ -20,6 +20,16 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 
 ## 当前 config-ready 实验
 
+### ADE 动态残差滤波结构替换
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-512x512.py 4 --work-dir work_dirs/offsegccmdrf_r4_ade20k_160k-512x512
+```
+
+该配置从 CCM+ACS-r4 分叉，用 competitive soft-mask gather 和动态 1×1 residual
+filter 完整替换 IACS matrix path；不是在 47.79 模型后再挂一个模块。当前只有
+config-ready 状态。
+
 ### ADE 责任竞争强度校准
 
 ```bash
@@ -30,6 +40,8 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 新的主贡献。
 
 ### COCO-Stuff164K 泛化
+
+T 配置的用户报告单次最终结果为 **42.08 mIoU**；B 仍为 config-ready。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Tiny/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py 4
