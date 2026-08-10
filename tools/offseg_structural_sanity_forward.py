@@ -35,12 +35,23 @@ def _load_components():
     registry.MODELS = _Registry()
     sys.modules['mmseg.registry'] = registry
 
+    class _OffSegCCMStub(nn.Module):
+        def __init__(self, in_channels, new_channels, num_classes,
+                     channels=32, **kwargs):
+            super().__init__()
+            self.num_classes = int(num_classes)
+            self.channels = int(channels)
+
+        def loss_by_feat(self, seg_logits, batch_data_samples):
+            return {}
+
     parent = types.ModuleType('mmseg.models.decode_heads.OffSegCCM')
-    parent.OffSegCCM = nn.Module
+    parent.OffSegCCM = _OffSegCCMStub
     sys.modules['mmseg.models.decode_heads.OffSegCCM'] = parent
 
     loaded = {}
-    for short_name in ('OffSegACS', 'OffSegRDF', 'OffSegSRG'):
+    for short_name in (
+            'OffSegACS', 'OffSegRDF', 'OffSegResponseDecoder', 'OffSegSRG'):
         qualified = f'mmseg.models.decode_heads.{short_name}'
         path = root / 'mmseg' / 'models' / 'decode_heads' / f'{short_name}.py'
         spec = importlib.util.spec_from_file_location(qualified, path)
@@ -52,12 +63,21 @@ def _load_components():
             loaded['OffSegACS'].AffineClassSubspace,
             loaded['OffSegACS'].ImageAdaptiveAffineClassSubspace,
             loaded['OffSegRDF'].ResponsibilityGuidedResidualFilter,
+            loaded['OffSegResponseDecoder'].ClassResponseRefinement,
+            loaded['OffSegResponseDecoder'].
+            ResponsibilityGuidedChannelExcitation,
+            loaded['OffSegResponseDecoder'].OffSegCCMIACSResponseConv,
+            loaded['OffSegResponseDecoder'].OffSegCCMRGE,
             loaded['OffSegSRG'].SemanticResidualRegionGraph)
 
 
 restrict_correction_to_topk, AffineClassSubspace, \
     ImageAdaptiveAffineClassSubspace, \
     ResponsibilityGuidedResidualFilter, \
+    ClassResponseRefinement, \
+    ResponsibilityGuidedChannelExcitation, \
+    OffSegCCMIACSResponseConv, \
+    OffSegCCMRGE, \
     SemanticResidualRegionGraph = _load_components()
 
 
@@ -512,7 +532,119 @@ def main():
                     sum(parameter.numel() for parameter in
                         small_acs.parameters()) == 1)
 
-    print('7) semantic residual region graph')
+    print('7) conventional class-response decoder blocks')
+    response_input = torch.randn(2, 15, 5, requires_grad=True)
+    response_refine = ClassResponseRefinement(
+        num_classes=5, kernel_size=3)
+    refined_response, response_statistics = response_refine(
+        response_input, spatial_shape=(3, 5))
+    all_ok &= check('zero response-conv is exact rectangular identity',
+                    torch.equal(refined_response, response_input) and
+                    float(response_statistics[
+                        'response_conv_move'].detach()) == 0.0 and
+                    float(response_statistics[
+                        'response_conv_kernel_norm'].detach()) == 0.0)
+    all_ok &= check('response-conv adds exactly K*3*3 parameters',
+                    sum(parameter.numel() for parameter in
+                        response_refine.parameters()) == 5 * 3 * 3)
+    refined_response.mean().backward()
+    all_ok &= check('zero response-conv can leave identity immediately',
+                    response_refine.depthwise.weight.grad is not None and
+                    bool(torch.isfinite(
+                        response_refine.depthwise.weight.grad).all()) and
+                    float(response_refine.depthwise.weight.grad.abs().sum())
+                    > 0 and response_input.grad is not None)
+    try:
+        response_refine(torch.randn(1, 15, 5), spatial_shape=(4, 4))
+    except ValueError:
+        bad_response_shape_rejected = True
+    else:
+        bad_response_shape_rejected = False
+    all_ok &= check('response-conv rejects an incorrect spatial shape',
+                    bad_response_shape_rejected)
+
+    rge_feat = torch.randn(2, 17, 32, requires_grad=True)
+    rge_centres = torch.randn(2, 5, 32, requires_grad=True)
+    rge_logits = torch.randn(2, 17, 5, requires_grad=True)
+    rge = ResponsibilityGuidedChannelExcitation(
+        num_classes=5, embed_dims=32, rank=4,
+        scale_init=0.05, mix_init=0.10,
+        detach_descriptor=True)
+    rge_correction, rge_scale, rge_mix, rge_statistics = rge(
+        rge_feat, rge_centres, rge_logits)
+    rge_projection = rge.project_residual(rge_feat, rge_centres)
+    rge_excitation, _ = rge.gather_excitation(
+        rge_projection, rge_logits)
+    rge_gate = (1.0 - rge_mix) + rge_mix * rge_excitation
+    manual_rge = 0.5 * (
+        rge_projection.square() * rge_gate[:, None]
+    ).sum(dim=-1) * rge_scale.view(1, 1, -1)
+    rge_weight = rge.responsibility_weights(rge_logits.detach())
+    all_ok &= check('RGE correction is the measured channel excitation',
+                    rge_correction.shape == (2, 17, 5) and
+                    float((rge_correction - manual_rge).abs().max()
+                          .detach()) < 1e-6)
+    all_ok &= check('RGE responsibilities normalise over space',
+                    float((rge_weight.sum(dim=1) - 1).abs().max()) < 1e-6)
+    all_ok &= check('RGE excitation is positive and unit-mean',
+                    bool((rge_excitation > 0).all()) and
+                    float((rge_excitation.mean(dim=-1) - 1).abs().max()
+                          .detach()) < 1e-6 and
+                    float((rge_gate.mean(dim=-1) - 1).abs().max().detach())
+                    < 1e-6)
+    all_ok &= check('RGE diagnostics are finite',
+                    bool(torch.isfinite(rge_correction).all()) and
+                    all(torch.isfinite(value) for value in
+                        rge_statistics.values()))
+    rge_correction.mean().backward()
+    all_ok &= check('RGE trains live responses and excitation strength',
+                    rge.raw_basis.grad is not None and
+                    float(rge.raw_basis.grad.abs().sum()) > 0 and
+                    rge.log_scale.grad is not None and
+                    float(rge.log_scale.grad.abs().sum()) > 0 and
+                    rge.mix_logit.grad is not None and
+                    float(rge.mix_logit.grad.abs()) > 0 and
+                    rge_feat.grad is not None and
+                    rge_centres.grad is not None)
+    all_ok &= check('RGE descriptor detaches only the logits path',
+                    rge_logits.grad is None)
+    all_ok &= check('RGE adds one scalar to ACS',
+                    sum(parameter.numel() for parameter in
+                        rge.parameters()) -
+                    sum(parameter.numel() for parameter in
+                        AffineClassSubspace(
+                            num_classes=5, embed_dims=32,
+                            rank=4).parameters()) == 1)
+
+    response_head = OffSegCCMIACSResponseConv(
+        in_channels=[8, 16, 24, 32],
+        new_channels=[8, 8, 16, 32],
+        num_classes=5, channels=32,
+        acs_rank=4, iacs_assignment='posterior')
+    hook_feat = torch.randn(2, 15, 32)
+    hook_centres = torch.randn(2, 5, 32)
+    hook_logits = torch.randn(2, 15, 5)
+    hook_correction, hook_state = response_head._subspace_correction(
+        hook_feat, hook_centres, hook_logits, spatial_shape=(3, 5))
+    hook_losses = response_head.loss_by_feat(hook_state, None)
+    all_ok &= check('response-conv head hook and diagnostics are wired',
+                    hook_correction.shape == (2, 15, 5) and
+                    'acc_response_conv_move' in hook_losses and
+                    'acc_iacs_keep_ratio' not in hook_losses)
+
+    rge_head = OffSegCCMRGE(
+        in_channels=[8, 16, 24, 32],
+        new_channels=[8, 8, 16, 32],
+        num_classes=5, channels=32, acs_rank=4)
+    rge_hook_correction, rge_hook_state = rge_head._subspace_correction(
+        hook_feat, hook_centres, hook_logits, spatial_shape=(3, 5))
+    rge_hook_losses = rge_head.loss_by_feat(rge_hook_state, None)
+    all_ok &= check('RGE head hook and diagnostics are wired',
+                    rge_hook_correction.shape == (2, 15, 5) and
+                    'acc_rge_mix' in rge_hook_losses and
+                    'iacs_mix' not in rge_hook_state)
+
+    print('8) semantic residual region graph')
     residual = torch.randn(batch, channels, height, width,
                            requires_grad=True)
     srg = SemanticResidualRegionGraph(

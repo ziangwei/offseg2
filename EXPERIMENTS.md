@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-08-09
+> 最后更新：2026-08-10
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -83,6 +83,8 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegccmiacs_r4_spectrum_ade20k_160k-512x512.py` | persistent rank spectrum | 47.32 | -0.09 vs IACS-r4 | 静态方向谱无增益 |
 | `offsegccmiacs_r4_responsibility_ade20k_160k-512x512.py` | non-centered responsibility | **47.79** | **+0.38 vs IACS-r4** | **当前主模型** |
 | `offsegccmiacs_r4_responsibility_spectrum_ade20k_160k-512x512.py` | responsibility + spectrum | 47.09 | -0.70 vs responsibility | 明显负交互 |
+| `offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py` | 学习责任竞争强度 | 47.18 | -0.61 vs responsibility | 标量校准失败；保留原始 responsibility |
+| `offsegccmdrf_r4_ade20k_160k-512x512.py` | 单个动态残差滤波器；run peak @136k | **46.63** | -0.61 vs ACS-r4；-1.16 vs responsibility | owner-confirmed run peak；把四通道响应压成一个均值滤波器有害 |
 
 核心差值：CCM→ACS `+0.44`，ACS→IACS `+0.17`，IACS→responsibility
 `+0.38`；responsibility 相对 CCM 合计 `+0.99`。
@@ -196,8 +198,8 @@ PARSeg3Aux、LCRAux、LTX、FA-U-Mix、PCQ、HC2-S34。配置存在不等于完�
 
 | 实验 | Config | 目的 | 判读 |
 |---|---|---|---|
-| ADE dynamic residual filter | `Base/offsegccmdrf_r4_ade20k_160k-512x512.py` | 用 masked-GAP→动态1×1残差滤波替换完整 IACS 矩阵 | ≥47.79 候选主模型；47.5–47.78 简化版；<47.5 拒绝 |
-| ADE competition strength | `Base/offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py` | 从 α=1 winner 恒等起步，只校准责任竞争强度 | <约+0.10或α≈1则删除 |
+| ADE response-conv | `Base/offsegccmiacs_r4_responsibility_responseconv_ade20k_160k-512x512.py` | 47.79 correction maps→逐类DWConv 3×3→同一logit | ≥47.9 有继续价值；≤47.79 不保留 |
+| ADE residual Gather–Excite | `Base/offsegccmrge_r4_ade20k_160k-512x512.py` | masked energy GAP→四通道excitation，完整替换IACS矩阵 | ≥47.5 可作可读简化版；≥47.79 候选主模型；<47.5 拒绝 |
 
 较早的非-responsibility IACS Stuff T/B 配置存在，但用户已明确暂不训练。
 

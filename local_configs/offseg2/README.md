@@ -20,24 +20,30 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 
 ## 当前实验与可复现配置
 
-### ADE 动态残差滤波结构替换
+### ADE 新一轮：局部响应卷积（性能优先）
 
 ```bash
-bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-512x512.py 4 --work-dir work_dirs/offsegccmdrf_r4_ade20k_160k-512x512
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_responseconv_ade20k_160k-512x512.py 4
 ```
 
-该配置从 CCM+ACS-r4 分叉，用 competitive soft-mask gather 和动态 1×1 residual
-filter 完整替换 IACS matrix path；不是在 47.79 模型后再挂一个模块。当前只有
-config-ready 状态。
+保留 47.79 scorer，并以零初始化的逐类 DWConv 3×3 串行细化 correction maps；配置
+内已有独立 work directory。
 
-### ADE 责任竞争强度校准
+### ADE 新一轮：Residual Gather–Excite（可读性优先）
 
 ```bash
-bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_r4_ade20k_160k-512x512.py 4
 ```
 
-该配置从 47.79 模型逐值恒等起步，只增加一个有界全局标量；它是精修控制，不是
-新的主贡献。
+用 responsibility masked-GAP→四通道 excitation 完整替换 IACS 矩阵；配置内已有独立
+work directory。
+
+### 刚完成的 ADE 负结果
+
+- `offsegccmiacs_r4_responsibility_competition`：**47.18**；
+- `offsegccmdrf_r4`：用户确认整次运行峰值 **46.63 @136k**。
+
+前者说明不再校准责任竞争强度；后者说明不能把四通道响应压成单个均值滤波器。
 
 ### COCO-Stuff164K 泛化
 

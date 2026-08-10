@@ -347,7 +347,8 @@ class OffSegCCMACS(OffSegCCM):
             rank=int(acs_rank),
             scale_init=float(acs_scale_init))
 
-    def _subspace_correction(self, metric_feat, centres, ccm_logits):
+    def _subspace_correction(self, metric_feat, centres, ccm_logits,
+                             spatial_shape=None):
         correction, scale = self.acs(metric_feat, centres)
         return correction, dict(
             acs_scale=scale,
@@ -369,7 +370,8 @@ class OffSegCCMACS(OffSegCCM):
         raw_score = metric_feat @ centres.transpose(1, 2)
         ccm_logits = self.offset_learning.mask_norm(raw_score)
         correction, subspace_state = self._subspace_correction(
-            metric_feat, centres, ccm_logits)
+            metric_feat, centres, ccm_logits,
+            spatial_shape=(height, width))
         final = self.offset_learning.mask_norm(raw_score + correction)
         final = final.permute(0, 2, 1).contiguous().view(
             batch, classes, height, width)
@@ -435,7 +437,8 @@ class OffSegCCMIACS(OffSegCCMACS):
                 iacs_learn_competition_strength),
             competition_bound=float(iacs_competition_bound))
 
-    def _subspace_correction(self, metric_feat, centres, ccm_logits):
+    def _subspace_correction(self, metric_feat, centres, ccm_logits,
+                             spatial_shape=None):
         raw_correction, scale, mix, anisotropy, statistics = self.acs(
             metric_feat, centres, ccm_logits)
         correction = restrict_correction_to_topk(

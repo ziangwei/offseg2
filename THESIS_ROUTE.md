@@ -1,12 +1,14 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-08-09
+> 最后更新：2026-08-10
 >
 > 当前结论：ADE20K 单次最佳为 **47.79 mIoU**，对应
 > `OffSegCCMIACS-r4 + non-centered responsibility`。
 >
-> 当前状态：COCO-Stuff164K responsibility-T/B 已完成，分别为 **42.08/44.33 mIoU**；
-> ADE 动态残差滤波与竞争强度校准为 config-ready，尚无最终结果报告。
+> 当前状态：COCO-Stuff164K responsibility-T/B 为 **42.08/44.33 mIoU**；ADE
+> competition-strength 为 **47.18**，dynamic residual filter 的整次运行峰值
+> 为 **46.63 @136k**，两条均已关闭。新的 response-conv 与 residual Gather–Excite
+> 配置已就绪。
 >
 > 代码分支：`main`。47.79 对应的训练 commit、seed、checkpoint/log 持久路径尚未登记；
 > 不得自动假设当前 HEAD 与原训练现场完全相同。
@@ -369,6 +371,8 @@ needle 来自赢家而非失败 run 的终局日志，不能写成严格的单�
 | top-3 + classwise mix | 45.92 | 组合失败；同时改变三项，不能单独归因 classwise mix |
 | persistent spectrum | 47.32 | 静态 rank 方向谱无收益 |
 | responsibility + spectrum | 47.09 | 对责任度赢家存在 -0.70 的明显负交互 |
+| responsibility competition-strength | 47.18 | 从原责任度恒等起步仍低 0.61；不再校准该标量 |
+| dynamic residual filter | 46.63 peak @136k | 用户确认的整次运行峰值；相对 ACS-r4 低 0.61，单均值滤波器替代失败 |
 
 NMF 代码存在但没有训练结果，并且 NMF 是已发表 Hamburger 系组件，不能把它当作本项目
 自创贡献；不得把“未跑”写成“失败”。
@@ -398,6 +402,8 @@ NMF 代码存在但没有训练结果，并且 NMF 是已发表 Hamburger 系组
 - GMMSeg 等以 GMM/EM responsibilities 建模类条件分布的方法；
 - CGRSeg RCM、Hamburger/NMF、EncNet 等已有模块；
 - 当前 competition-strength 单标量校准。
+- depth-wise convolution、Squeeze-and-Excitation 与 Gather–Excite 等传统响应细化/通道
+  重标定模块。
 
 ### 10.3 可以谨慎主张的项目贡献
 
@@ -445,7 +451,7 @@ TAM-NT 没有结果，因此不能断言文本内容是否必要。PARSeg 仍是
 
 ## 12. 当前实验与判读规则
 
-### 12.1 ADE：responsibility 竞争强度校准
+### 12.1 ADE：responsibility 竞争强度校准（已完成并关闭）
 
 配置：
 `local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py`
@@ -458,9 +464,9 @@ a_ic(α) ∝ exp(logit_ic - α logsumexp_c(logit_i))
 ```
 
 在其余权重相同的前提下，`raw=0` 时该算子与 47.79 responsibility 算子逐值等价，
-范围为 0.75–1.25；但训练仍从 scratch 开始，并不加载 47.79 checkpoint。它是估计器
-精修，不是第二项核心创新。若增益不足约 0.10，或
-`acc_iacs_competition_strength` 最终仍接近 1，则从最终模型删除。
+范围为 0.75–1.25；但训练仍从 scratch 开始，并不加载 47.79 checkpoint。用户报告
+最终结果为 **47.18**，相对原 responsibility 低 **0.61**。因此 exact posterior
+responsibility 保留，competition-strength 标量从最终模型删除。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py 4
@@ -484,13 +490,12 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 T/B 配置的用户报告单次最终结果分别为 **42.08/44.33 mIoU**。如果同一节点并发运行，
 还必须设置不同 `PORT`。在没有本环境 OffSeg-T/B 配对基线前，不得写“已证明泛化提升”。
 
-### 12.3 ADE：动态残差滤波结构替换
+### 12.3 ADE：动态残差滤波结构替换（已完成并关闭）
 
 配置：
 `local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-512x512.py`
 
-这是一个 `config-ready` 的结构替换实验，不是已经获得正结果的方法。它保留 CCM、
-ACS-r4 类残差响应和 post-CCM competitive soft masks，但删除 IACS 的完整 scatter
+它保留 CCM、ACS-r4 类残差响应和 post-CCM competitive soft masks，但删除 IACS 的完整 scatter
 matrix、trace normalization、identity matrix mix、spectrum 和 quadratic matrix
 scoring。实际计算图为：
 
@@ -503,18 +508,67 @@ scoring。实际计算图为：
   → the same final class logit
 ```
 
-设计假设来自单次受控结果：`centered+responsibility=47.13`，而
-`non-centered+responsibility=47.79`。这提示 non-centered moment 中的共同残差轴
-值得被单独保留，但不能在新结果出来前把 0.66 差值全部归因于该残差轴。动态滤波器由
-masked mean 与 residual RMS 构造；低一致性残差产生弱滤波响应，ACS 主响应始终完整
-保留。模型只新增一个全局 filter-gain 标量，不增加分支、损失或外部信息。
+动态滤波器由 masked mean 与 residual RMS 构造；低一致性残差产生弱滤波响应，ACS
+主响应始终完整保留。模型只新增一个全局 filter-gain 标量，不增加分支、损失或外部
+信息。用户确认其整次运行峰值为 **46.63 @136k**：相对 ACS-r4 47.24 低
+0.61，相对 responsibility 47.79 低 1.16。事实结论是把四通道响应压成一个均值模板
+过度丢失信息；这不等价于否定所有常规卷积或通道注意力结构。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-512x512.py 4 --work-dir work_dirs/offsegccmdrf_r4_ade20k_160k-512x512
 ```
 
-判读：达到或超过 47.79 才能取代当前主模型；47.5–47.78 可作为更直观的结构简化版；
-低于 47.5 则拒绝该替换，不继续在其上叠加 SE 或其他模块。
+### 12.4 ADE：class-response depth-wise refinement（config-ready）
+
+配置：
+`local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_responseconv_ade20k_160k-512x512.py`
+
+这是性能优先的传统 decoder 增强。它完整保留 47.79 的 responsibility-IACS，只对其
+150 张 class correction maps 串联一个逐类 depth-wise `3×3` 残差卷积：
+
+```text
+responsibility-IACS correction maps
+  → class-wise DWConv 3×3 (zero-init)
+  → residual add
+  → write back to the same final logits
+```
+
+卷积权重全零初始化，因此在相同公共权重下起步逐值等于 47.79 scorer；新增
+`150×3×3=1350` 个参数，不产生第二头、仲裁门或新损失。它计算原逐像素二次 scorer
+没有显式处理的同类 correction 局部邻域。它并不简化 IACS，而是用于回答传统空间
+模块能否把 47.79 推近 48。达到约 47.9 以上才值得保留；不超过 47.79 就删除。
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_responseconv_ade20k_160k-512x512.py 4
+```
+
+### 12.5 ADE：responsibility-guided residual Gather–Excite（config-ready）
+
+配置：
+`local_configs/offseg2/Base/offsegccmrge_r4_ade20k_160k-512x512.py`
+
+这是可读性优先的矩阵替代：保留全部四张 ACS 残差能量响应图，而不是像 DRF 那样
+压成一张均值模板；responsibility soft masks 对四通道做 masked-GAP，得到当前图像、
+当前类别的通道 excitation，再重标定并求和：
+
+```text
+four residual energy response maps
+  → responsibility masked global average pooling
+  → positive four-channel excitation
+  → channel reweight + sum
+  → write to the same final logits
+```
+
+它物理删除完整 `r×r` scatter/metric 和 quadratic matrix multiply，只保留逐通道均值
+归一化及一个全局 excitation mix 标量。该结构受 SE/Gather–Excite 通道重标定范式启发，
+但不是原样复用标准 SE/GE 模块；本项目
+只能主张把 competitive responsibility 与 OffSeg 动态中心周围的类残差响应结合，
+不能声称发明通道注意力。≥47.5 可作为结构清楚的简化模型，≥47.79 才能替代当前
+主模型，<47.5 则拒绝。
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_r4_ade20k_160k-512x512.py 4
+```
 
 ## 13. 论文写作框架
 
@@ -552,7 +606,7 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-
 
 优先级从高到低：
 
-1. 读出 ADE dynamic-residual-filter 与 competition-strength 的最终结果；
+1. 读出 ADE response-conv 与 residual Gather–Excite 的最终结果；
 2. 在同一环境跑 OffSeg-B 配对基线，停止使用“取低基线”做法；
 3. 对 47.79 主模型至少补多 seed 或一次独立复跑，报告均值/方差；
 4. 用同一工具统计全模型 Params、FLOPs，并测同硬件 latency/吞吐；
@@ -576,10 +630,13 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-
 | CCM | `mmseg/models/decode_heads/OffSegCCM.py` |
 | ACS / IACS / responsibility | `mmseg/models/decode_heads/OffSegACS.py` |
 | Dynamic residual filter | `mmseg/models/decode_heads/OffSegRDF.py` |
+| Conventional response decoder blocks | `mmseg/models/decode_heads/OffSegResponseDecoder.py` |
 | 结构恒等性与梯度测试 | `tools/offseg_structural_sanity_forward.py` |
 | ADE winner config | `local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_ade20k_160k-512x512.py` |
 | ADE competition config | `local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py` |
 | ADE dynamic-filter config | `local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-512x512.py` |
+| ADE response-conv config | `local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_responseconv_ade20k_160k-512x512.py` |
+| ADE residual Gather–Excite config | `local_configs/offseg2/Base/offsegccmrge_r4_ade20k_160k-512x512.py` |
 | Stuff-T config | `local_configs/offseg2/Tiny/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py` |
 | Stuff-B config | `local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py` |
 | 结果账本 | `EXPERIMENTS.md` |
@@ -617,6 +674,8 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-
 - [OffSeg / Offset Learning, ICCV 2025](https://arxiv.org/abs/2508.08811)
 - [Grassmann Class Representation (GCR), ICCV 2023](https://openaccess.thecvf.com/content/ICCV2023/html/Wang_Get_the_Best_of_Both_Worlds_Improving_Accuracy_and_Transferability_ICCV_2023_paper.html)
 - [GMMSeg, NeurIPS 2022](https://proceedings.neurips.cc/paper_files/paper/2022/hash/cb1c4782f159b55380b4584671c4fd88-Abstract-Conference.html)
+- [Squeeze-and-Excitation Networks, CVPR 2018](https://openaccess.thecvf.com/content_cvpr_2018/html/Hu_Squeeze-and-Excitation_Networks_CVPR_2018_paper)
+- [Gather-Excite, NeurIPS 2018](https://proceedings.neurips.cc/paper/2018/hash/dc363817786ff182b7bc59565d864523-Abstract.html)
 - [OffSeg 官方仓库](https://github.com/HVision-NKU/OffSeg)
 
 引用前仍应回到论文原文核对具体表号、消融数字和版权要求；本文件不替代正式文献引用。

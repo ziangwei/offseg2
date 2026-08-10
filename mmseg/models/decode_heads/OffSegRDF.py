@@ -169,7 +169,8 @@ class OffSegCCMDRF(OffSegCCMACS):
             detach_template=bool(drf_detach_template),
             eps=float(drf_eps))
 
-    def _subspace_correction(self, metric_feat, centres, ccm_logits):
+    def _subspace_correction(self, metric_feat, centres, ccm_logits,
+                             spatial_shape=None):
         correction, scale, gain, statistics = self.acs(
             metric_feat, centres, ccm_logits)
         return correction, dict(
