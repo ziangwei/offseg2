@@ -80,6 +80,36 @@ class ClassResponseRefinement(nn.Module):
         return refined, statistics
 
 
+class ClasswiseExcitationMLP(nn.Module):
+    """A grouped 1x1 MLP for one descriptor per semantic class."""
+
+    def __init__(self, num_classes, channels, hidden_channels):
+        super().__init__()
+        self.num_classes = int(num_classes)
+        self.channels = int(channels)
+        self.net = nn.Sequential(
+            nn.Conv1d(
+                self.num_classes * self.channels,
+                self.num_classes * int(hidden_channels),
+                kernel_size=1, groups=self.num_classes),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(
+                self.num_classes * int(hidden_channels),
+                self.num_classes * self.channels,
+                kernel_size=1, groups=self.num_classes))
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, descriptor):
+        if descriptor.ndim != 3 or descriptor.shape[1:] != (
+                self.num_classes, self.channels):
+            raise ValueError('descriptor must have shape [B,K,r]')
+        output = self.net(descriptor.reshape(
+            descriptor.shape[0], self.num_classes * self.channels, 1))
+        return output.reshape(
+            descriptor.shape[0], self.num_classes, self.channels)
+
+
 class ResponsibilityGuidedChannelExcitation(AffineClassSubspace):
     """Gather--Excite over the rank-r class-residual response channels.
 
@@ -95,27 +125,47 @@ class ResponsibilityGuidedChannelExcitation(AffineClassSubspace):
     def __init__(self, num_classes: int, embed_dims: int, rank: int = 4,
                  scale_init: float = 0.05, mix_init: float = 0.10,
                  detach_descriptor: bool = True, eps: float = 1e-6,
-                 excitation_hidden: int = 0):
+                 excitation_hidden: int = 0,
+                 excitation_classwise: bool = False,
+                 response_hidden: int = 0):
         super().__init__(num_classes=num_classes, embed_dims=embed_dims,
                          rank=rank, scale_init=scale_init, eps=eps)
         if not 0 < mix_init < 1:
             raise ValueError('mix_init must be strictly between 0 and 1')
         self.detach_descriptor = bool(detach_descriptor)
+        self.excitation_classwise = bool(excitation_classwise)
         mix_logit = math.log(float(mix_init) / (1.0 - float(mix_init)))
         self.mix_logit = nn.Parameter(torch.tensor(mix_logit))
         excitation_hidden = int(excitation_hidden)
         if excitation_hidden < 0:
             raise ValueError('excitation_hidden must be non-negative')
         if excitation_hidden:
-            self.excitation_refine = nn.Sequential(
-                nn.Linear(self.rank, excitation_hidden),
-                nn.ReLU(inplace=True),
-                nn.Linear(excitation_hidden, self.rank))
-            # The residual excitation starts exactly from the measured RGE.
-            nn.init.zeros_(self.excitation_refine[-1].weight)
-            nn.init.zeros_(self.excitation_refine[-1].bias)
+            if self.excitation_classwise:
+                self.excitation_refine = ClasswiseExcitationMLP(
+                    self.num_classes, self.rank, excitation_hidden)
+            else:
+                self.excitation_refine = nn.Sequential(
+                    nn.Linear(self.rank, excitation_hidden),
+                    nn.ReLU(inplace=True),
+                    nn.Linear(excitation_hidden, self.rank))
+                # The residual excitation starts from the measured RGE.
+                nn.init.zeros_(self.excitation_refine[-1].weight)
+                nn.init.zeros_(self.excitation_refine[-1].bias)
         else:
             self.excitation_refine = None
+
+        response_hidden = int(response_hidden)
+        if response_hidden < 0:
+            raise ValueError('response_hidden must be non-negative')
+        if response_hidden:
+            self.response_refine = nn.Sequential(
+                nn.Linear(self.rank, response_hidden),
+                nn.ReLU(inplace=True),
+                nn.Linear(response_hidden, self.rank))
+            nn.init.zeros_(self.response_refine[-1].weight)
+            nn.init.zeros_(self.response_refine[-1].bias)
+        else:
+            self.response_refine = None
 
     def excitation_mix(self):
         return torch.sigmoid(self.mix_logit)
@@ -166,6 +216,12 @@ class ResponsibilityGuidedChannelExcitation(AffineClassSubspace):
 
     def forward(self, feat, cls_repr, ccm_logits):
         projection = self.project_residual(feat, cls_repr)
+        response_move = None
+        if self.response_refine is not None:
+            response_delta = self.response_refine(projection)
+            projection = projection + response_delta
+            response_move = response_delta.detach().abs().mean()
+
         excitation, statistics = self.gather_excitation(
             projection, ccm_logits)
         if self.excitation_refine is not None:
@@ -180,6 +236,8 @@ class ResponsibilityGuidedChannelExcitation(AffineClassSubspace):
                 rge_refine_min=modulation.detach().min(),
                 rge_refine_max=modulation.detach().max(),
             )
+        if response_move is not None:
+            statistics['rge_response_move'] = response_move
         mix = self.excitation_mix()
         gate = (1.0 - mix) + mix * excitation
 
@@ -242,7 +300,9 @@ class OffSegCCMRGE(OffSegCCMACS):
     def __init__(self, in_channels, new_channels, num_classes,
                  acs_rank=4, acs_scale_init=0.05,
                  rge_mix_init=0.10, rge_detach_descriptor=True,
-                 rge_eps=1e-6, rge_excitation_hidden=0, **kwargs):
+                 rge_eps=1e-6, rge_excitation_hidden=0,
+                 rge_excitation_classwise=False,
+                 rge_response_hidden=0, **kwargs):
         super().__init__(
             in_channels=in_channels,
             new_channels=new_channels,
@@ -258,7 +318,9 @@ class OffSegCCMRGE(OffSegCCMACS):
             mix_init=float(rge_mix_init),
             detach_descriptor=bool(rge_detach_descriptor),
             eps=float(rge_eps),
-            excitation_hidden=int(rge_excitation_hidden))
+            excitation_hidden=int(rge_excitation_hidden),
+            excitation_classwise=bool(rge_excitation_classwise),
+            response_hidden=int(rge_response_hidden))
 
     def _subspace_correction(self, metric_feat, centres, ccm_logits,
                              spatial_shape=None):
@@ -287,4 +349,7 @@ class OffSegCCMRGE(OffSegCCMACS):
                 seg_logits['rge_refine_min'].detach())
             losses['acc_rge_refine_max'] = (
                 seg_logits['rge_refine_max'].detach())
+        if 'rge_response_move' in seg_logits:
+            losses['acc_rge_response_move'] = (
+                seg_logits['rge_response_move'].detach())
         return losses

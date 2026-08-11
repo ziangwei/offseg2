@@ -27,7 +27,7 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 ```
 
 保留 47.79 scorer，并以零初始化的逐类 DWConv 3×3 串行细化 correction maps；配置
-内已有独立 work directory。
+内已有独立 work directory。该实验最终为 **46.99**，已关闭。
 
 ### ADE 新一轮：Residual Gather–Excite（可读性优先）
 
@@ -46,6 +46,13 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_mlp_r4_ade20k_1
 
 新配置在四通道描述子后加入共享 `4→8→4` excitation MLP，末层零初始化，起步等于
 47.56 RGE；配置内已有独立 work directory。
+
+另外两个并行 RGE 变体：
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_groupedse_r4_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_responseffn_r4_ade20k_160k-512x512.py 4
+```
 
 ### 刚完成的 ADE 负结果
 

@@ -8,7 +8,8 @@
 > 当前状态：COCO-Stuff164K responsibility-T/B 为 **42.08/44.33 mIoU**；ADE
 > competition-strength 为 **47.18**，dynamic residual filter 的整次运行峰值
 > 为 **46.63 @136k**，两条均已关闭；residual Gather–Excite 为 **47.56**，说明可读的
-> 通道激励替代有效但仍落后完整 IACS 0.23。response-conv 与 RGE-MLP 为当前实验。
+> 通道激励替代有效但仍落后完整 IACS 0.23；response-conv 为 **46.99**，空间细化轴
+> 已关闭。RGE-MLP、RGE-GroupedSE 与 RGE-ResponseFFN 为当前实验。
 >
 > 代码分支：`main`。47.79 对应的训练 commit、seed、checkpoint/log 持久路径尚未登记；
 > 不得自动假设当前 HEAD 与原训练现场完全相同。
@@ -374,6 +375,7 @@ needle 来自赢家而非失败 run 的终局日志，不能写成严格的单�
 | responsibility competition-strength | 47.18 | 从原责任度恒等起步仍低 0.61；不再校准该标量 |
 | dynamic residual filter | 46.63 peak @136k | 用户确认的整次运行峰值；相对 ACS-r4 低 0.61，单均值滤波器替代失败 |
 | residual Gather–Excite | 47.56 | 相对 ACS-r4 +0.32，距 responsibility-IACS 仅 0.23；矩阵自由的四通道重标定成立 |
+| responsibility response-conv | 46.99 | 相对 responsibility-IACS -0.80；最终 correction map 的逐类 3×3 卷积有害 |
 
 NMF 代码存在但没有训练结果，并且 NMF 是已发表 Hamburger 系组件，不能把它当作本项目
 自创贡献；不得把“未跑”写成“失败”。
@@ -519,7 +521,7 @@ scoring。实际计算图为：
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmdrf_r4_ade20k_160k-512x512.py 4 --work-dir work_dirs/offsegccmdrf_r4_ade20k_160k-512x512
 ```
 
-### 12.4 ADE：class-response depth-wise refinement（config-ready）
+### 12.4 ADE：class-response depth-wise refinement（已完成并关闭）
 
 配置：
 `local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_responseconv_ade20k_160k-512x512.py`
@@ -537,7 +539,8 @@ responsibility-IACS correction maps
 卷积权重全零初始化，因此在相同公共权重下起步逐值等于 47.79 scorer；新增
 `150×3×3=1350` 个参数，不产生第二头、仲裁门或新损失。它计算原逐像素二次 scorer
 没有显式处理的同类 correction 局部邻域。它并不简化 IACS，而是用于回答传统空间
-模块能否把 47.79 推近 48。达到约 47.9 以上才值得保留；不超过 47.79 就删除。
+模块能否把 47.79 推近 48。用户报告结果为 **46.99**，相对输入主模型下降 0.80；
+因此不再继续最终 correction map 上的卷积核、门控或空间平滑变体。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_responseconv_ade20k_160k-512x512.py 4
@@ -583,6 +586,25 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_r4_ade20k_160k-
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_mlp_r4_ade20k_160k-512x512.py 4
+```
+
+### 12.7 ADE：RGE-GroupedSE（config-ready）
+
+每个类别的四个残差响应通道来自自己的学习基，因此不强迫不同类别共享同一个 excitation
+映射。responsibility masked-GAP 后接逐类分组 `4→8→4` SE；末层零初始化，起步等于
+47.56 RGE，新增约 0.011M 参数。结构就是常规的 `masked pool→grouped SE→reweight`。
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_groupedse_r4_ade20k_160k-512x512.py 4
+```
+
+### 12.8 ADE：RGE-ResponseFFN（config-ready）
+
+在 responsibility 聚合之前，对四张逐像素残差响应图应用共享残差 `4→8→4` pointwise
+FFN，再进入原 RGE。末层零初始化，起步等于 47.56 RGE，只新增 76 个参数。
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_responseffn_r4_ade20k_160k-512x512.py 4
 ```
 
 ## 13. 论文写作框架
