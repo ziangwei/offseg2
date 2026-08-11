@@ -1,14 +1,14 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-08-10
+> 最后更新：2026-08-11
 >
 > 当前结论：ADE20K 单次最佳为 **47.79 mIoU**，对应
 > `OffSegCCMIACS-r4 + non-centered responsibility`。
 >
 > 当前状态：COCO-Stuff164K responsibility-T/B 为 **42.08/44.33 mIoU**；ADE
 > competition-strength 为 **47.18**，dynamic residual filter 的整次运行峰值
-> 为 **46.63 @136k**，两条均已关闭。新的 response-conv 与 residual Gather–Excite
-> 配置已就绪。
+> 为 **46.63 @136k**，两条均已关闭；residual Gather–Excite 为 **47.56**，说明可读的
+> 通道激励替代有效但仍落后完整 IACS 0.23。response-conv 与 RGE-MLP 为当前实验。
 >
 > 代码分支：`main`。47.79 对应的训练 commit、seed、checkpoint/log 持久路径尚未登记；
 > 不得自动假设当前 HEAD 与原训练现场完全相同。
@@ -373,6 +373,7 @@ needle 来自赢家而非失败 run 的终局日志，不能写成严格的单�
 | responsibility + spectrum | 47.09 | 对责任度赢家存在 -0.70 的明显负交互 |
 | responsibility competition-strength | 47.18 | 从原责任度恒等起步仍低 0.61；不再校准该标量 |
 | dynamic residual filter | 46.63 peak @136k | 用户确认的整次运行峰值；相对 ACS-r4 低 0.61，单均值滤波器替代失败 |
+| residual Gather–Excite | 47.56 | 相对 ACS-r4 +0.32，距 responsibility-IACS 仅 0.23；矩阵自由的四通道重标定成立 |
 
 NMF 代码存在但没有训练结果，并且 NMF 是已发表 Hamburger 系组件，不能把它当作本项目
 自创贡献；不得把“未跑”写成“失败”。
@@ -542,7 +543,7 @@ responsibility-IACS correction maps
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibility_responseconv_ade20k_160k-512x512.py 4
 ```
 
-### 12.5 ADE：responsibility-guided residual Gather–Excite（config-ready）
+### 12.5 ADE：responsibility-guided residual Gather–Excite（已完成）
 
 配置：
 `local_configs/offseg2/Base/offsegccmrge_r4_ade20k_160k-512x512.py`
@@ -563,11 +564,25 @@ four residual energy response maps
 归一化及一个全局 excitation mix 标量。该结构受 SE/Gather–Excite 通道重标定范式启发，
 但不是原样复用标准 SE/GE 模块；本项目
 只能主张把 competitive responsibility 与 OffSeg 动态中心周围的类残差响应结合，
-不能声称发明通道注意力。≥47.5 可作为结构清楚的简化模型，≥47.79 才能替代当前
-主模型，<47.5 则拒绝。
+不能声称发明通道注意力。用户报告单次结果为 **47.56**：相对 ACS-r4 提升 0.32，
+相对完整 responsibility-IACS 低 0.23。它已经达到结构清楚的简化模型门槛，下一步只
+优化其四通道 excitation，不重新引入完整矩阵。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_r4_ade20k_160k-512x512.py 4
+```
+
+### 12.6 ADE：RGE shared excitation MLP（config-ready）
+
+配置：
+`local_configs/offseg2/Base/offsegccmrge_mlp_r4_ade20k_160k-512x512.py`
+
+在 47.56 RGE 的 `masked-GAP → four-channel excitation` 中间加入一个所有类别共享的
+`4→8→4` 两层 MLP，让四个残差响应通道相互校准。末层全零初始化，因此相同公共权重
+下起步逐值等于原 RGE；只新增 76 个参数，不恢复 `r×r` 矩阵，不增加分支或损失。
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_mlp_r4_ade20k_160k-512x512.py 4
 ```
 
 ## 13. 论文写作框架

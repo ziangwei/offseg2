@@ -85,6 +85,7 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegccmiacs_r4_responsibility_spectrum_ade20k_160k-512x512.py` | responsibility + spectrum | 47.09 | -0.70 vs responsibility | 明显负交互 |
 | `offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py` | 学习责任竞争强度 | 47.18 | -0.61 vs responsibility | 标量校准失败；保留原始 responsibility |
 | `offsegccmdrf_r4_ade20k_160k-512x512.py` | 单个动态残差滤波器；run peak @136k | **46.63** | -0.61 vs ACS-r4；-1.16 vs responsibility | owner-confirmed run peak；把四通道响应压成一个均值滤波器有害 |
+| `offsegccmrge_r4_ade20k_160k-512x512.py` | responsibility masked-GAP + 四通道 excitation | **47.56** | +0.32 vs ACS-r4；-0.23 vs responsibility | 可读矩阵替代成立，但对角通道门仍有缺口 |
 
 核心差值：CCM→ACS `+0.44`，ACS→IACS `+0.17`，IACS→responsibility
 `+0.38`；responsibility 相对 CCM 合计 `+0.99`。
@@ -199,7 +200,7 @@ PARSeg3Aux、LCRAux、LTX、FA-U-Mix、PCQ、HC2-S34。配置存在不等于完�
 | 实验 | Config | 目的 | 判读 |
 |---|---|---|---|
 | ADE response-conv | `Base/offsegccmiacs_r4_responsibility_responseconv_ade20k_160k-512x512.py` | 47.79 correction maps→逐类DWConv 3×3→同一logit | ≥47.9 有继续价值；≤47.79 不保留 |
-| ADE residual Gather–Excite | `Base/offsegccmrge_r4_ade20k_160k-512x512.py` | masked energy GAP→四通道excitation，完整替换IACS矩阵 | ≥47.5 可作可读简化版；≥47.79 候选主模型；<47.5 拒绝 |
+| ADE RGE-MLP | `Base/offsegccmrge_mlp_r4_ade20k_160k-512x512.py` | 在47.56 RGE的四通道描述子上加共享2层excitation MLP | ≥47.7 有效；≥47.79 候选主模型；≤47.56 删除 |
 
 较早的非-responsibility IACS Stuff T/B 配置存在，但用户已明确暂不训练。
 

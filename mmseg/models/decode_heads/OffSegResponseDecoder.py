@@ -94,7 +94,8 @@ class ResponsibilityGuidedChannelExcitation(AffineClassSubspace):
 
     def __init__(self, num_classes: int, embed_dims: int, rank: int = 4,
                  scale_init: float = 0.05, mix_init: float = 0.10,
-                 detach_descriptor: bool = True, eps: float = 1e-6):
+                 detach_descriptor: bool = True, eps: float = 1e-6,
+                 excitation_hidden: int = 0):
         super().__init__(num_classes=num_classes, embed_dims=embed_dims,
                          rank=rank, scale_init=scale_init, eps=eps)
         if not 0 < mix_init < 1:
@@ -102,6 +103,19 @@ class ResponsibilityGuidedChannelExcitation(AffineClassSubspace):
         self.detach_descriptor = bool(detach_descriptor)
         mix_logit = math.log(float(mix_init) / (1.0 - float(mix_init)))
         self.mix_logit = nn.Parameter(torch.tensor(mix_logit))
+        excitation_hidden = int(excitation_hidden)
+        if excitation_hidden < 0:
+            raise ValueError('excitation_hidden must be non-negative')
+        if excitation_hidden:
+            self.excitation_refine = nn.Sequential(
+                nn.Linear(self.rank, excitation_hidden),
+                nn.ReLU(inplace=True),
+                nn.Linear(excitation_hidden, self.rank))
+            # The residual excitation starts exactly from the measured RGE.
+            nn.init.zeros_(self.excitation_refine[-1].weight)
+            nn.init.zeros_(self.excitation_refine[-1].bias)
+        else:
+            self.excitation_refine = None
 
     def excitation_mix(self):
         return torch.sigmoid(self.mix_logit)
@@ -154,6 +168,18 @@ class ResponsibilityGuidedChannelExcitation(AffineClassSubspace):
         projection = self.project_residual(feat, cls_repr)
         excitation, statistics = self.gather_excitation(
             projection, ccm_logits)
+        if self.excitation_refine is not None:
+            # A conventional shared SE-style MLP lets the four gathered
+            # response channels calibrate one another.  Its zero-initialised
+            # last layer gives modulation=1 at the start.
+            modulation = 2.0 * torch.sigmoid(
+                self.excitation_refine(excitation))
+            excitation = excitation * modulation
+            statistics.update(
+                rge_refine_std=modulation.detach().std(unbiased=False),
+                rge_refine_min=modulation.detach().min(),
+                rge_refine_max=modulation.detach().max(),
+            )
         mix = self.excitation_mix()
         gate = (1.0 - mix) + mix * excitation
 
@@ -216,7 +242,7 @@ class OffSegCCMRGE(OffSegCCMACS):
     def __init__(self, in_channels, new_channels, num_classes,
                  acs_rank=4, acs_scale_init=0.05,
                  rge_mix_init=0.10, rge_detach_descriptor=True,
-                 rge_eps=1e-6, **kwargs):
+                 rge_eps=1e-6, rge_excitation_hidden=0, **kwargs):
         super().__init__(
             in_channels=in_channels,
             new_channels=new_channels,
@@ -231,7 +257,8 @@ class OffSegCCMRGE(OffSegCCMACS):
             scale_init=float(acs_scale_init),
             mix_init=float(rge_mix_init),
             detach_descriptor=bool(rge_detach_descriptor),
-            eps=float(rge_eps))
+            eps=float(rge_eps),
+            excitation_hidden=int(rge_excitation_hidden))
 
     def _subspace_correction(self, metric_feat, centres, ccm_logits,
                              spatial_shape=None):
@@ -253,4 +280,11 @@ class OffSegCCMRGE(OffSegCCMACS):
             seg_logits['rge_effective_support'].detach())
         losses['acc_rge_assignment_tv'] = (
             seg_logits['rge_assignment_tv'].detach())
+        if 'rge_refine_std' in seg_logits:
+            losses['acc_rge_refine_std'] = (
+                seg_logits['rge_refine_std'].detach())
+            losses['acc_rge_refine_min'] = (
+                seg_logits['rge_refine_min'].detach())
+            losses['acc_rge_refine_max'] = (
+                seg_logits['rge_refine_max'].detach())
         return losses

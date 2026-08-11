@@ -35,8 +35,17 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmiacs_r4_responsibil
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_r4_ade20k_160k-512x512.py 4
 ```
 
-用 responsibility masked-GAP→四通道 excitation 完整替换 IACS 矩阵；配置内已有独立
-work directory。
+该模型最终为 **47.56**：用 responsibility masked-GAP→四通道 excitation 替换 IACS
+矩阵，相对 ACS-r4 提升 0.32。
+
+继续优化该方向：
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_mlp_r4_ade20k_160k-512x512.py 4
+```
+
+新配置在四通道描述子后加入共享 `4→8→4` excitation MLP，末层零初始化，起步等于
+47.56 RGE；配置内已有独立 work directory。
 
 ### 刚完成的 ADE 负结果
 
