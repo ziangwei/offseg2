@@ -47,11 +47,15 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_mlp_r4_ade20k_1
 新配置在四通道描述子后加入共享 `4→8→4` excitation MLP，末层零初始化，起步等于
 47.56 RGE；配置内已有独立 work directory。
 
-另外两个并行 RGE 变体：
+这三条 RGE 增容实验最终均下降，已经关闭：shared MLP **47.20**、Grouped-SE
+**46.49**、Response-FFN **46.69**。
+
+当前三槽改为一个清楚的 2×2 设计（plain OffSeg 是已有格子）：
 
 ```bash
-bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_groupedse_r4_ade20k_160k-512x512.py 4
-bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_responseffn_r4_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegrge_r4_noccm_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegocf_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegocfrge_r4_ade20k_160k-512x512.py 4
 ```
 
 ### 刚完成的 ADE 负结果

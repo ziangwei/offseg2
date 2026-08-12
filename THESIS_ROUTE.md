@@ -8,8 +8,9 @@
 > 当前状态：COCO-Stuff164K responsibility-T/B 为 **42.08/44.33 mIoU**；ADE
 > competition-strength 为 **47.18**，dynamic residual filter 的整次运行峰值
 > 为 **46.63 @136k**，两条均已关闭；residual Gather–Excite 为 **47.56**，说明可读的
-> 通道激励替代有效但仍落后完整 IACS 0.23；response-conv 为 **46.99**，空间细化轴
-> 已关闭。RGE-MLP、RGE-GroupedSE 与 RGE-ResponseFFN 为当前实验。
+> 通道激励替代有效但仍落后完整 IACS 0.23；其 MLP/Grouped-SE/Response-FFN 变体
+> 分别仅 **47.20/46.49/46.69**，继续加工四通道的路线关闭。当前三槽改为删除 CCM
+> 的 RGE、常规 Object-Context Feedback，以及二者组合。
 >
 > 代码分支：`main`。47.79 对应的训练 commit、seed、checkpoint/log 持久路径尚未登记；
 > 不得自动假设当前 HEAD 与原训练现场完全相同。
@@ -376,6 +377,9 @@ needle 来自赢家而非失败 run 的终局日志，不能写成严格的单�
 | dynamic residual filter | 46.63 peak @136k | 用户确认的整次运行峰值；相对 ACS-r4 低 0.61，单均值滤波器替代失败 |
 | residual Gather–Excite | 47.56 | 相对 ACS-r4 +0.32，距 responsibility-IACS 仅 0.23；矩阵自由的四通道重标定成立 |
 | responsibility response-conv | 46.99 | 相对 responsibility-IACS -0.80；最终 correction map 的逐类 3×3 卷积有害 |
+| RGE + shared MLP | 47.20 | 相对 RGE -0.36；共享通道映射无效 |
+| RGE + grouped SE | 46.49 | 相对 RGE -1.07；逐类通道自由度明显有害 |
+| RGE + response FFN | 46.69 | 相对 RGE -0.87；聚合前任意通道混合有害 |
 
 NMF 代码存在但没有训练结果，并且 NMF 是已发表 Hamburger 系组件，不能把它当作本项目
 自创贡献；不得把“未跑”写成“失败”。
@@ -568,14 +572,14 @@ four residual energy response maps
 但不是原样复用标准 SE/GE 模块；本项目
 只能主张把 competitive responsibility 与 OffSeg 动态中心周围的类残差响应结合，
 不能声称发明通道注意力。用户报告单次结果为 **47.56**：相对 ACS-r4 提升 0.32，
-相对完整 responsibility-IACS 低 0.23。它已经达到结构清楚的简化模型门槛，下一步只
-优化其四通道 excitation，不重新引入完整矩阵。
+相对完整 responsibility-IACS 低 0.23。它已经达到结构清楚的简化模型门槛；后续三种
+通道增容均下降，因此原始 RGE 固定保留，不再加工其四通道 excitation。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_r4_ade20k_160k-512x512.py 4
 ```
 
-### 12.6 ADE：RGE shared excitation MLP（config-ready）
+### 12.6 ADE：RGE shared excitation MLP（已完成并关闭：47.20）
 
 配置：
 `local_configs/offseg2/Base/offsegccmrge_mlp_r4_ade20k_160k-512x512.py`
@@ -583,28 +587,51 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_r4_ade20k_160k-
 在 47.56 RGE 的 `masked-GAP → four-channel excitation` 中间加入一个所有类别共享的
 `4→8→4` 两层 MLP，让四个残差响应通道相互校准。末层全零初始化，因此相同公共权重
 下起步逐值等于原 RGE；只新增 76 个参数，不恢复 `r×r` 矩阵，不增加分支或损失。
+最终 **47.20**，相对 RGE 下降 0.36。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_mlp_r4_ade20k_160k-512x512.py 4
 ```
 
-### 12.7 ADE：RGE-GroupedSE（config-ready）
+### 12.7 ADE：RGE-GroupedSE（已完成并关闭：46.49）
 
 每个类别的四个残差响应通道来自自己的学习基，因此不强迫不同类别共享同一个 excitation
 映射。responsibility masked-GAP 后接逐类分组 `4→8→4` SE；末层零初始化，起步等于
-47.56 RGE，新增约 0.011M 参数。结构就是常规的 `masked pool→grouped SE→reweight`。
+47.56 RGE，新增约 0.011M 参数。最终 **46.49**，说明逐类自由度明显有害。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_groupedse_r4_ade20k_160k-512x512.py 4
 ```
 
-### 12.8 ADE：RGE-ResponseFFN（config-ready）
+### 12.8 ADE：RGE-ResponseFFN（已完成并关闭：46.69）
 
 在 responsibility 聚合之前，对四张逐像素残差响应图应用共享残差 `4→8→4` pointwise
-FFN，再进入原 RGE。末层零初始化，起步等于 47.56 RGE，只新增 76 个参数。
+FFN，再进入原 RGE。末层零初始化，起步等于 47.56 RGE，只新增 76 个参数。最终
+**46.69**，说明聚合前任意混合也破坏有效响应。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_responseffn_r4_ade20k_160k-512x512.py 4
+```
+
+### 12.9 ADE：删除 CCM 的可读 2×2 结构实验（config-ready）
+
+这轮不再向 RGE 添加融合器，而是检验复杂组件能否整体删除。四个格子中 plain OffSeg
+已经存在，新增另外三格：
+
+```text
+OffSeg ────────────────→ Object-Context Feedback
+  │                               │
+  ↓                               ↓
+RGE without CCM ───────→ Object-Context Feedback + RGE
+```
+
+Object-Context Feedback 只有四步：初始预测形成 soft regions，按区域池化图内类别上下文，
+把对应上下文送回像素，用零初始化残差 MLP 融合。它不建立坐标矩阵，也不增加辅助损失。
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegrge_r4_noccm_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegocf_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegocfrge_r4_ade20k_160k-512x512.py 4
 ```
 
 ## 13. 论文写作框架
