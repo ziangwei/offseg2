@@ -252,6 +252,236 @@ class ResponsibilityGuidedChannelExcitation(AffineClassSubspace):
         return correction, scale, mix, statistics
 
 
+class ResponsibilityGuidedResponsePyramid(
+        ResponsibilityGuidedChannelExcitation):
+    """Add PSP-style regional context to the four residual response maps.
+
+    The global RGE path is kept intact.  Soft class responsibilities gather
+    the same four response energies inside coarse image regions, and a
+    zero-initialised residual gain lets the regional path enter only when it
+    helps.  No channel MLP or response matrix is introduced.
+    """
+
+    def __init__(self, *args, pyramid_bins=(2, 4), region_gain_init=0.0,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        bins = tuple(int(value) for value in pyramid_bins)
+        if not bins or any(value < 2 for value in bins):
+            raise ValueError('pyramid_bins must contain integers >= 2')
+        self.pyramid_bins = bins
+        self.region_gain = nn.Parameter(torch.tensor(float(region_gain_init)))
+
+    def _regional_descriptors(self, values, weight, spatial_shape):
+        """Responsibility-masked regional averages, returned at every pixel."""
+        if spatial_shape is None or len(spatial_shape) != 2:
+            raise ValueError('spatial_shape=(H,W) is required')
+        height, width = (int(spatial_shape[0]), int(spatial_shape[1]))
+        batch, pixels, classes, channels = values.shape
+        if height * width != pixels:
+            raise ValueError('spatial_shape does not match HW')
+
+        numerator = (values * weight[..., None]).permute(
+            0, 2, 3, 1).reshape(batch * classes, channels, height, width)
+        denominator = weight.permute(0, 2, 1).reshape(
+            batch * classes, 1, height, width)
+        descriptors = []
+        for bins in self.pyramid_bins:
+            pooled_num = F.adaptive_avg_pool2d(numerator, (bins, bins))
+            pooled_den = F.adaptive_avg_pool2d(denominator, (bins, bins))
+            pooled = pooled_num / pooled_den.clamp_min(1e-8)
+            dense = F.interpolate(
+                pooled, size=(height, width), mode='bilinear',
+                align_corners=False)
+            dense = dense.reshape(
+                batch, classes, channels, pixels).permute(0, 3, 1, 2)
+            descriptors.append(dense)
+        return descriptors
+
+    def _gather_pyramid(self, projection, ccm_logits, spatial_shape):
+        weight = self.responsibility_weights(ccm_logits)
+        global_energy = torch.einsum(
+            'bnk,bnkr->bkr', weight, projection.square())
+        regional = self._regional_descriptors(
+            projection.square(), weight, spatial_shape)
+        effective_support = weight.square().sum(
+            dim=1).clamp_min(self.eps).reciprocal()
+        spatial_reference = torch.softmax(ccm_logits, dim=1)
+        assignment_tv = 0.5 * (
+            weight - spatial_reference).abs().sum(dim=1).mean()
+        return global_energy, regional, effective_support.mean(), assignment_tv
+
+    def forward(self, feat, cls_repr, ccm_logits, spatial_shape=None):
+        projection = self.project_residual(feat, cls_repr)
+        if self.detach_descriptor:
+            with torch.no_grad():
+                gathered = self._gather_pyramid(
+                    projection.detach(), ccm_logits.detach(), spatial_shape)
+        else:
+            gathered = self._gather_pyramid(
+                projection, ccm_logits, spatial_shape)
+        global_descriptor, regional_descriptors, support, assignment_tv = (
+            gathered)
+
+        mix = self.excitation_mix()
+        global_excitation = (
+            self.rank * global_descriptor + self.eps
+        ) / (global_descriptor.sum(dim=-1, keepdim=True) + self.eps)
+        global_gate = (1.0 - mix) + mix * global_excitation
+        response_energy = projection.square()
+        global_energy = (
+            response_energy * global_gate[:, None, :, :]).sum(dim=-1)
+
+        regional_energy = []
+        regional_gate_values = []
+        for descriptor in regional_descriptors:
+            excitation = (
+                self.rank * descriptor + self.eps
+            ) / (descriptor.sum(dim=-1, keepdim=True) + self.eps)
+            gate = (1.0 - mix) + mix * excitation
+            regional_gate_values.append(gate)
+            regional_energy.append((response_energy * gate).sum(dim=-1))
+        regional_energy = torch.stack(regional_energy, dim=0).mean(dim=0)
+        regional_delta = regional_energy - global_energy
+        energy = global_energy + self.region_gain * regional_delta
+
+        scale = F.softplus(self.log_scale)
+        correction = 0.5 * energy * scale.view(1, 1, -1)
+        all_regional_gates = torch.stack(regional_gate_values, dim=0)
+        statistics = dict(
+            rge_effective_support=support,
+            rge_assignment_tv=assignment_tv,
+            rge_gate_std=global_gate.detach().std(unbiased=False),
+            rge_gate_min=global_gate.detach().min(),
+            rge_gate_max=global_gate.detach().max(),
+            response_pyramid_gain=self.region_gain.detach(),
+            response_pyramid_gate_std=(
+                all_regional_gates.detach().std(unbiased=False)),
+            response_pyramid_delta=regional_delta.detach().abs().mean(),
+        )
+        return correction, scale, mix, statistics
+
+
+class ResponsibilityGuidedPairwisePyramid(
+        ResponsibilityGuidedResponsePyramid):
+    """Four self-response maps plus six explicit pair-response maps.
+
+    The global path is the response-map expansion of responsibility-IACS:
+    four squared responses and six signed pair products are gathered and
+    written back to the same class score.  Regional pooling can update only
+    the four self responses (``diag``) or all ten responses (``full``).
+    """
+
+    def __init__(self, *args, scatter_eps=1e-4,
+                 regional_mode='diag', **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.rank != 4:
+            raise ValueError('pairwise response expansion currently uses r=4')
+        if regional_mode not in ('diag', 'full'):
+            raise ValueError("regional_mode must be 'diag' or 'full'")
+        self.scatter_eps = float(scatter_eps)
+        self.regional_mode = regional_mode
+        self.register_buffer(
+            'pair_left', torch.tensor([0, 0, 0, 1, 1, 2], dtype=torch.long),
+            persistent=False)
+        self.register_buffer(
+            'pair_right', torch.tensor([1, 2, 3, 2, 3, 3], dtype=torch.long),
+            persistent=False)
+
+    def _self_pair_energy(self, live_self, live_pair, self_descriptor,
+                          pair_descriptor, mix):
+        trace = self_descriptor.sum(dim=-1, keepdim=True)
+        denominator = trace + self.scatter_eps
+        self_gate = ((1.0 - mix) + mix * (
+            self.rank * self_descriptor + self.scatter_eps) / denominator)
+        self_energy = (live_self * self_gate).sum(dim=-1)
+        pair_gate = mix * (2.0 * self.rank * pair_descriptor) / denominator
+        pair_energy = (live_pair * pair_gate).sum(dim=-1)
+        return self_energy + pair_energy, self_energy, self_gate, pair_energy
+
+    def _gather_pairwise(self, projection, ccm_logits, spatial_shape):
+        weight = self.responsibility_weights(ccm_logits)
+        self_maps = projection.square()
+        pair_maps = (
+            projection[..., self.pair_left] *
+            projection[..., self.pair_right])
+        global_self = torch.einsum(
+            'bnk,bnkr->bkr', weight, self_maps)
+        global_pair = torch.einsum(
+            'bnk,bnkp->bkp', weight, pair_maps)
+        regional_self = self._regional_descriptors(
+            self_maps, weight, spatial_shape)
+        regional_pair = (
+            self._regional_descriptors(pair_maps, weight, spatial_shape)
+            if self.regional_mode == 'full' else None)
+        effective_support = weight.square().sum(
+            dim=1).clamp_min(self.eps).reciprocal()
+        spatial_reference = torch.softmax(ccm_logits, dim=1)
+        assignment_tv = 0.5 * (
+            weight - spatial_reference).abs().sum(dim=1).mean()
+        return (global_self, global_pair, regional_self, regional_pair,
+                effective_support.mean(), assignment_tv)
+
+    def forward(self, feat, cls_repr, ccm_logits, spatial_shape=None):
+        projection = self.project_residual(feat, cls_repr)
+        if self.detach_descriptor:
+            with torch.no_grad():
+                gathered = self._gather_pairwise(
+                    projection.detach(), ccm_logits.detach(), spatial_shape)
+        else:
+            gathered = self._gather_pairwise(
+                projection, ccm_logits, spatial_shape)
+        (global_self, global_pair, regional_self, regional_pair,
+         support, assignment_tv) = gathered
+
+        live_self = projection.square()
+        live_pair = (
+            projection[..., self.pair_left] *
+            projection[..., self.pair_right])
+        mix = self.excitation_mix()
+        global_energy, global_diag, global_gate, global_pair_energy = (
+            self._self_pair_energy(
+                live_self, live_pair, global_self[:, None, :, :],
+                global_pair[:, None, :, :], mix))
+
+        regional_energy = []
+        regional_gate_values = []
+        for index, self_descriptor in enumerate(regional_self):
+            if self.regional_mode == 'full':
+                current, _, gate, _ = self._self_pair_energy(
+                    live_self, live_pair, self_descriptor,
+                    regional_pair[index], mix)
+            else:
+                trace = self_descriptor.sum(dim=-1, keepdim=True)
+                gate = ((1.0 - mix) + mix * (
+                    self.rank * self_descriptor + self.scatter_eps) /
+                    (trace + self.scatter_eps))
+                current = (live_self * gate).sum(dim=-1)
+            regional_gate_values.append(gate)
+            regional_energy.append(current)
+        regional_energy = torch.stack(regional_energy, dim=0).mean(dim=0)
+        regional_reference = (
+            global_energy if self.regional_mode == 'full' else global_diag)
+        regional_delta = regional_energy - regional_reference
+        energy = global_energy + self.region_gain * regional_delta
+
+        scale = F.softplus(self.log_scale)
+        correction = 0.5 * energy * scale.view(1, 1, -1)
+        all_regional_gates = torch.stack(regional_gate_values, dim=0)
+        statistics = dict(
+            rge_effective_support=support,
+            rge_assignment_tv=assignment_tv,
+            rge_gate_std=global_gate.detach().std(unbiased=False),
+            rge_gate_min=global_gate.detach().min(),
+            rge_gate_max=global_gate.detach().max(),
+            response_pyramid_gain=self.region_gain.detach(),
+            response_pyramid_gate_std=(
+                all_regional_gates.detach().std(unbiased=False)),
+            response_pyramid_delta=regional_delta.detach().abs().mean(),
+            pair_response_move=global_pair_energy.detach().abs().mean(),
+        )
+        return correction, scale, mix, statistics
+
+
 @MODELS.register_module()
 class OffSegCCMIACSResponseConv(OffSegCCMIACS):
     """Responsibility-IACS followed by class-wise local response refinement."""
@@ -353,3 +583,95 @@ class OffSegCCMRGE(OffSegCCMACS):
             losses['acc_rge_response_move'] = (
                 seg_logits['rge_response_move'].detach())
         return losses
+
+
+@MODELS.register_module()
+class OffSegCCMRGEPyramid(OffSegCCMRGE):
+    """Readable RGE with global and regional response aggregation."""
+
+    def __init__(self, in_channels, new_channels, num_classes,
+                 acs_rank=4, acs_scale_init=0.05,
+                 rge_mix_init=0.10, rge_detach_descriptor=True,
+                 rge_eps=1e-6, response_pyramid_bins=(2, 4),
+                 response_pyramid_gain_init=0.0, **kwargs):
+        super().__init__(
+            in_channels=in_channels,
+            new_channels=new_channels,
+            num_classes=num_classes,
+            acs_rank=acs_rank,
+            acs_scale_init=acs_scale_init,
+            rge_mix_init=rge_mix_init,
+            rge_detach_descriptor=rge_detach_descriptor,
+            rge_eps=rge_eps,
+            **kwargs)
+        self.acs = ResponsibilityGuidedResponsePyramid(
+            num_classes=self.num_classes,
+            embed_dims=self.channels,
+            rank=int(acs_rank),
+            scale_init=float(acs_scale_init),
+            mix_init=float(rge_mix_init),
+            detach_descriptor=bool(rge_detach_descriptor),
+            eps=float(rge_eps),
+            pyramid_bins=response_pyramid_bins,
+            region_gain_init=float(response_pyramid_gain_init))
+
+    def _subspace_correction(self, metric_feat, centres, ccm_logits,
+                             spatial_shape=None):
+        correction, scale, mix, statistics = self.acs(
+            metric_feat, centres, ccm_logits,
+            spatial_shape=spatial_shape)
+        return correction, dict(
+            acs_scale=scale,
+            acs_correction=correction,
+            rge_mix=mix,
+            **statistics)
+
+    def loss_by_feat(self, seg_logits, batch_data_samples):
+        losses = super().loss_by_feat(seg_logits, batch_data_samples)
+        losses['acc_response_pyramid_gain'] = (
+            seg_logits['response_pyramid_gain'].detach())
+        losses['acc_response_pyramid_gate_std'] = (
+            seg_logits['response_pyramid_gate_std'].detach())
+        losses['acc_response_pyramid_delta'] = (
+            seg_logits['response_pyramid_delta'].detach())
+        if 'pair_response_move' in seg_logits:
+            losses['acc_pair_response_move'] = (
+                seg_logits['pair_response_move'].detach())
+        return losses
+
+
+@MODELS.register_module()
+class OffSegCCMPairRGEPyramid(OffSegCCMRGEPyramid):
+    """Explicit self/pair response maps with regional response pooling."""
+
+    def __init__(self, in_channels, new_channels, num_classes,
+                 acs_rank=4, acs_scale_init=0.05,
+                 rge_mix_init=0.10, rge_detach_descriptor=True,
+                 rge_eps=1e-6, response_pyramid_bins=(2, 4),
+                 response_pyramid_gain_init=0.0,
+                 pair_scatter_eps=1e-4,
+                 pair_regional_mode='diag', **kwargs):
+        super().__init__(
+            in_channels=in_channels,
+            new_channels=new_channels,
+            num_classes=num_classes,
+            acs_rank=acs_rank,
+            acs_scale_init=acs_scale_init,
+            rge_mix_init=rge_mix_init,
+            rge_detach_descriptor=rge_detach_descriptor,
+            rge_eps=rge_eps,
+            response_pyramid_bins=response_pyramid_bins,
+            response_pyramid_gain_init=response_pyramid_gain_init,
+            **kwargs)
+        self.acs = ResponsibilityGuidedPairwisePyramid(
+            num_classes=self.num_classes,
+            embed_dims=self.channels,
+            rank=int(acs_rank),
+            scale_init=float(acs_scale_init),
+            mix_init=float(rge_mix_init),
+            detach_descriptor=bool(rge_detach_descriptor),
+            eps=float(rge_eps),
+            pyramid_bins=response_pyramid_bins,
+            region_gain_init=float(response_pyramid_gain_init),
+            scatter_eps=float(pair_scatter_eps),
+            regional_mode=pair_regional_mode)

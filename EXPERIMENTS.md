@@ -203,9 +203,11 @@ PARSeg3Aux、LCRAux、LTX、FA-U-Mix、PCQ、HC2-S34。配置存在不等于完�
 
 | 实验 | Config | 目的 | 判读 |
 |---|---|---|---|
-| ADE RGE no-CCM | `Base/offsegrge_r4_noccm_ade20k_160k-512x512.py` | 删除整个CCM与辅助CE，只保留四响应图重标定 | ≥47.3 为有效简化；≥47.5 为优雅主模型 |
-| ADE OCF | `Base/offsegocf_ade20k_160k-512x512.py` | 预测→图内类别上下文汇聚→送回像素→残差MLP | ≥47.0 有独立正信号；≥47.5 为候选主模型 |
-| ADE OCF+RGE | `Base/offsegocfrge_r4_ade20k_160k-512x512.py` | 常规对象上下文反馈后接四响应图重标定 | ≥47.79 为新的强主模型；≥47.5 可作可读替代 |
+| ADE RGE-ResponsePyramid | `Base/offsegccmrge_r4_responsepyramid_ade20k_160k-512x512.py` | 四张自身响应图做全局/区域 masked pooling；无矩阵和通道MLP | ≥47.56 说明区域信息有效；≥47.79 可作为优雅主模型 |
+| ADE PairRGE-DiagPyramid | `Base/offsegccmpairrge_r4_diagpyramid_ade20k_160k-512x512.py` | 全局保留4张自身+6张协同响应；区域只更新稳定的4张自身响应 | ≥47.79 保留赢家；≥48.0 成为新的强主模型 |
+| ADE PairRGE-FullPyramid | `Base/offsegccmpairrge_r4_fullpyramid_ade20k_160k-512x512.py` | 全局和区域都使用4张自身+6张协同响应 | ≥47.79 说明区域协同有效；≥48.0 成为最高结果 |
+
+上一轮已写好的 no-CCM RGE / OCF / OCF+RGE 配置保留作历史候选，但经重新审查后不占当前训练槽：前者主动删除已验证的 CCM 增益，后两者与 OffSeg 已有的类别汇聚/回注高度重复。
 
 较早的非-responsibility IACS Stuff T/B 配置存在，但用户已明确暂不训练。
 

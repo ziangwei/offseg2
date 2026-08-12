@@ -1,6 +1,6 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-08-11
+> 最后更新：2026-08-12
 >
 > 当前结论：ADE20K 单次最佳为 **47.79 mIoU**，对应
 > `OffSegCCMIACS-r4 + non-centered responsibility`。
@@ -9,8 +9,9 @@
 > competition-strength 为 **47.18**，dynamic residual filter 的整次运行峰值
 > 为 **46.63 @136k**，两条均已关闭；residual Gather–Excite 为 **47.56**，说明可读的
 > 通道激励替代有效但仍落后完整 IACS 0.23；其 MLP/Grouped-SE/Response-FFN 变体
-> 分别仅 **47.20/46.49/46.69**，继续加工四通道的路线关闭。当前三槽改为删除 CCM
-> 的 RGE、常规 Object-Context Feedback，以及二者组合。
+> 分别仅 **47.20/46.49/46.69**，说明任意 MLP/SE/FFN 不能补回 RGE 丢失的有符号
+> 协同信息。当前三槽统一转向类别响应分解：显式的四张自身响应、六张协同响应，以及
+> 全局/区域 response pyramid；no-CCM RGE 与 OCF 三配置保留但不占当前槽位。
 >
 > 代码分支：`main`。47.79 对应的训练 commit、seed、checkpoint/log 持久路径尚未登记；
 > 不得自动假设当前 HEAD 与原训练现场完全相同。
@@ -45,6 +46,11 @@ Responsibility：用跨类竞争后的像素责任度估计该二阶几何
 一句话概括：**OffSeg 同时按图偏移类别中心和像素特征，但最终仍用单中心双线性
 打分；本路线围绕动态图像类别中心建立低秩、单图自适应、由类别竞争决定统计样本的
 中心相对残差几何。**
+
+论文主图采用更直观但信息等价的“类别响应分解”表达：动态图像类别中心先产生四张
+残差滤波响应图，四张自身响应与六张有符号协同响应经 responsibility masked pooling
+后写回同一路类别分数。`4×4` 二次形式只作为这一响应模块的紧凑等价推导放在附录；
+当前 response-pyramid 实验进一步把全图响应证据扩展为全局/区域证据。
 
 ### 当前证据
 
@@ -613,25 +619,32 @@ FFN，再进入原 RGE。末层零初始化，起步等于 47.56 RGE，只新增
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_responseffn_r4_ade20k_160k-512x512.py 4
 ```
 
-### 12.9 ADE：删除 CCM 的可读 2×2 结构实验（config-ready）
+### 12.9 ADE：类别响应金字塔（config-ready）
 
-这轮不再向 RGE 添加融合器，而是检验复杂组件能否整体删除。四个格子中 plain OffSeg
-已经存在，新增另外三格：
+RGE 只汇聚四张自身响应图，无法从四个平方能量恢复六种有符号的成对协同响应。完整
+IACS 的 `4×4` 计算可等价展开成四张自身响应图与六张成对响应图，因此主文结构图不再
+需要抽象矩阵：
 
 ```text
-OffSeg ────────────────→ Object-Context Feedback
-  │                               │
-  ↓                               ↓
-RGE without CCM ───────→ Object-Context Feedback + RGE
+四张类别残差响应图
+  ├─ 四张自身响应图
+  └─ 六张有符号协同响应图
+              ↓
+ responsibility masked pooling
+              ↓
+      全局/区域证据聚合
+              ↓
+       写回同一路类别分数
 ```
 
-Object-Context Feedback 只有四步：初始预测形成 soft regions，按区域池化图内类别上下文，
-把对应上下文送回像素，用零初始化残差 MLP 融合。它不建立坐标矩阵，也不增加辅助损失。
+三个槽位分别测试：只用四张自身响应的优雅版、全局协同+区域自身响应的平衡强版、以及
+全局/区域都保留协同响应的最高容量版。区域聚合使用固定 2×2/4×4 adaptive average
+pooling，没有任意通道网络、第二预测路或新增损失；区域残差增益从零开始。
 
 ```bash
-bash tools/dist_train.sh local_configs/offseg2/Base/offsegrge_r4_noccm_ade20k_160k-512x512.py 4
-bash tools/dist_train.sh local_configs/offseg2/Base/offsegocf_ade20k_160k-512x512.py 4
-bash tools/dist_train.sh local_configs/offseg2/Base/offsegocfrge_r4_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_r4_responsepyramid_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmpairrge_r4_diagpyramid_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmpairrge_r4_fullpyramid_ade20k_160k-512x512.py 4
 ```
 
 ## 13. 论文写作框架

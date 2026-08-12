@@ -50,12 +50,12 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_mlp_r4_ade20k_1
 这三条 RGE 增容实验最终均下降，已经关闭：shared MLP **47.20**、Grouped-SE
 **46.49**、Response-FFN **46.69**。
 
-当前三槽改为一个清楚的 2×2 设计（plain OffSeg 是已有格子）：
+当前三槽统一服务于“类别响应分解”主线：四张残差响应图先形成自身响应，强版再显式形成六张协同响应；所有响应均由 responsibility 在全图及区域金字塔中汇聚。上一轮 no-CCM RGE / OCF / OCF+RGE 配置保留，但不再推荐占当前槽位。
 
 ```bash
-bash tools/dist_train.sh local_configs/offseg2/Base/offsegrge_r4_noccm_ade20k_160k-512x512.py 4
-bash tools/dist_train.sh local_configs/offseg2/Base/offsegocf_ade20k_160k-512x512.py 4
-bash tools/dist_train.sh local_configs/offseg2/Base/offsegocfrge_r4_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_r4_responsepyramid_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmpairrge_r4_diagpyramid_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmpairrge_r4_fullpyramid_ade20k_160k-512x512.py 4
 ```
 
 ### 刚完成的 ADE 负结果
