@@ -1,6 +1,6 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-08-12
+> 最后更新：2026-08-13
 >
 > 当前结论：ADE20K 单次最佳为 **47.79 mIoU**，对应
 > `OffSegCCMIACS-r4 + non-centered responsibility`。
@@ -10,8 +10,9 @@
 > 为 **46.63 @136k**，两条均已关闭；residual Gather–Excite 为 **47.56**，说明可读的
 > 通道激励替代有效但仍落后完整 IACS 0.23；其 MLP/Grouped-SE/Response-FFN 变体
 > 分别仅 **47.20/46.49/46.69**，说明任意 MLP/SE/FFN 不能补回 RGE 丢失的有符号
-> 协同信息。当前三槽统一转向类别响应分解：显式的四张自身响应、六张协同响应，以及
-> 全局/区域 response pyramid；no-CCM RGE 与 OCF 三配置保留但不占当前槽位。
+> 协同信息。上一轮三个 response-pyramid 模型到至少 136k 均从未超过 46.3，现已停止；
+> 因日志已删除，只能判定该组合实现失败，不能把掉点单独归因给 pair 展开。当前三槽回到
+> 全局类别响应：均值增强、平均签名协同和正/负响应激励；不再使用区域池化或空间分支。
 >
 > 代码分支：`main`。47.79 对应的训练 commit、seed、checkpoint/log 持久路径尚未登记；
 > 不得自动假设当前 HEAD 与原训练现场完全相同。
@@ -619,7 +620,7 @@ FFN，再进入原 RGE。末层零初始化，起步等于 47.56 RGE，只新增
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_responseffn_r4_ade20k_160k-512x512.py 4
 ```
 
-### 12.9 ADE：类别响应金字塔（config-ready）
+### 12.9 ADE：类别响应金字塔（interim/stopped：均低于46.3）
 
 RGE 只汇聚四张自身响应图，无法从四个平方能量恢复六种有符号的成对协同响应。完整
 IACS 的 `4×4` 计算可等价展开成四张自身响应图与六张成对响应图，因此主文结构图不再
@@ -637,14 +638,38 @@ IACS 的 `4×4` 计算可等价展开成四张自身响应图与六张成对响�
        写回同一路类别分数
 ```
 
-三个槽位分别测试：只用四张自身响应的优雅版、全局协同+区域自身响应的平衡强版、以及
-全局/区域都保留协同响应的最高容量版。区域聚合使用固定 2×2/4×4 adaptive average
-pooling，没有任意通道网络、第二预测路或新增损失；区域残差增益从零开始。
+三个模型训练到至少 136k 时均从未超过 46.3，用户已停止训练并删除完整日志。因此事实
+结论仅是“当前区域响应金字塔组合失败”；不能在没有 needle 的情况下断言 pair 展开本身
+错误。三者共同的区域增量是首要嫌疑，但这里只保留为解释而非确定因果。该轴不再继续。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmrge_r4_responsepyramid_ade20k_160k-512x512.py 4
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmpairrge_r4_diagpyramid_ade20k_160k-512x512.py 4
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmpairrge_r4_fullpyramid_ade20k_160k-512x512.py 4
+```
+
+### 12.10 ADE：全局响应模式分解（config-ready）
+
+新一轮只处理全图类别响应，不再引入空间邻域。责任度 masked pooling 将四张有符号残差
+响应汇总成当前图像、当前类别的平均响应模式，并与围绕该模式的离散响应区分开：
+
+```text
+四张有符号类别残差响应
+  → competitive responsibility masked pooling
+  ├─ 平均响应模式：该图中这个类通常如何激活
+  └─ 离散响应：像素围绕平均模式如何变化
+  → 重标定并写回同一路类别分数
+```
+
+MeanBoost 保留完整 47.79 统计，在起点逐值等价的前提下只允许平均响应有界增强/减弱；
+Signature-RGE 用四张自身响应和六张平均签名协同替代完整离散矩阵；Bipolar-RGE 将每张
+响应拆为正负两侧，直接保留“沿该方向哪一侧激活”的信息。三者都没有新 MLP、区域路径、
+第二预测分支或新损失类型。
+
+```bash
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_meanboost_iacs_r4_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_signaturerge_r4_ade20k_160k-512x512.py 4
+bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade20k_160k-512x512.py 4
 ```
 
 ## 13. 论文写作框架

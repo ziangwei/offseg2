@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-08-10
+> 最后更新：2026-08-13
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -90,6 +90,9 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegccmrge_mlp_r4_ade20k_160k-512x512.py` | RGE + shared excitation MLP | **47.20** | -0.36 vs RGE | 任意通道映射有害 |
 | `offsegccmrge_groupedse_r4_ade20k_160k-512x512.py` | RGE + classwise grouped SE | **46.49** | -1.07 vs RGE | 逐类自由度明显过拟合 |
 | `offsegccmrge_responseffn_r4_ade20k_160k-512x512.py` | RGE + response FFN | **46.69** | -0.87 vs RGE | 聚合前通道混合有害 |
+| `offsegccmrge_r4_responsepyramid_ade20k_160k-512x512.py` | RGE + 全局/区域响应池化 | **<46.3 by ≥136k** | 至少 -1.26 vs RGE | owner-reported interim/stopped；从未超过46.3，区域响应轴关闭 |
+| `offsegccmpairrge_r4_diagpyramid_ade20k_160k-512x512.py` | 全局 self+pair + 区域 self | **<46.3 by ≥136k** | 至少 -1.49 vs responsibility | owner-reported interim/stopped；无精确日志，不能拆分归因 |
+| `offsegccmpairrge_r4_fullpyramid_ade20k_160k-512x512.py` | 全局/区域 self+pair | **<46.3 by ≥136k** | 至少 -1.49 vs responsibility | owner-reported interim/stopped；无精确日志，不能拆分归因 |
 
 核心差值：CCM→ACS `+0.44`，ACS→IACS `+0.17`，IACS→responsibility
 `+0.38`；responsibility 相对 CCM 合计 `+0.99`。
@@ -203,9 +206,9 @@ PARSeg3Aux、LCRAux、LTX、FA-U-Mix、PCQ、HC2-S34。配置存在不等于完�
 
 | 实验 | Config | 目的 | 判读 |
 |---|---|---|---|
-| ADE RGE-ResponsePyramid | `Base/offsegccmrge_r4_responsepyramid_ade20k_160k-512x512.py` | 四张自身响应图做全局/区域 masked pooling；无矩阵和通道MLP | ≥47.56 说明区域信息有效；≥47.79 可作为优雅主模型 |
-| ADE PairRGE-DiagPyramid | `Base/offsegccmpairrge_r4_diagpyramid_ade20k_160k-512x512.py` | 全局保留4张自身+6张协同响应；区域只更新稳定的4张自身响应 | ≥47.79 保留赢家；≥48.0 成为新的强主模型 |
-| ADE PairRGE-FullPyramid | `Base/offsegccmpairrge_r4_fullpyramid_ade20k_160k-512x512.py` | 全局和区域都使用4张自身+6张协同响应 | ≥47.79 说明区域协同有效；≥48.0 成为最高结果 |
+| ADE MeanBoost-IACS | `Base/offsegccm_meanboost_iacs_r4_ade20k_160k-512x512.py` | 保留47.79的完整责任度统计，只有界调整已被centered消融证明重要的图内平均响应 | ≥47.79 说明均值定向增强有效；≥48.0 成为新的强模型 |
+| ADE Signature-RGE | `Base/offsegccm_signaturerge_r4_ade20k_160k-512x512.py` | 四张自身响应 + 六张平均响应签名协同；删除完整离散度矩阵 | ≥47.56 说明有符号均值协同补回RGE缺口；≥47.79 可作为更可读主模型 |
+| ADE Bipolar-RGE | `Base/offsegccm_bipolarrge_r4_ade20k_160k-512x512.py` | 将四张有符号响应拆成正/负两侧后分别masked-pool和激励 | ≥47.56 说明响应极性有用；≥47.79 可作为无矩阵主模型 |
 
 上一轮已写好的 no-CCM RGE / OCF / OCF+RGE 配置保留作历史候选，但经重新审查后不占当前训练槽：前者主动删除已验证的 CCM 增益，后两者与 OffSeg 已有的类别汇聚/回注高度重复。
 
