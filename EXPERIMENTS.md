@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-08-13
+> 最后更新：2026-08-16
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -93,6 +93,8 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegccmrge_r4_responsepyramid_ade20k_160k-512x512.py` | RGE + 全局/区域响应池化 | **<46.3 by ≥136k** | 至少 -1.26 vs RGE | owner-reported interim/stopped；从未超过46.3，区域响应轴关闭 |
 | `offsegccmpairrge_r4_diagpyramid_ade20k_160k-512x512.py` | 全局 self+pair + 区域 self | **<46.3 by ≥136k** | 至少 -1.49 vs responsibility | owner-reported interim/stopped；无精确日志，不能拆分归因 |
 | `offsegccmpairrge_r4_fullpyramid_ade20k_160k-512x512.py` | 全局/区域 self+pair | **<46.3 by ≥136k** | 至少 -1.49 vs responsibility | owner-reported interim/stopped；无精确日志，不能拆分归因 |
+| `offsegccm_signaturerge_r4_ade20k_160k-512x512.py` | 四张self响应 + 六张平均签名协同 | **46.71** | -0.85 vs RGE；-1.08 vs responsibility | owner-final；只保留均值协同不能替代完整跨轴离散关系 |
+| `offsegccm_bipolarrge_r4_ade20k_160k-512x512.py` | 正/负响应分别汇聚与激励 | **46.61** | -0.95 vs RGE；-1.18 vs responsibility | owner-final；固定响应轴的极性拆分明显有害 |
 
 核心差值：CCM→ACS `+0.44`，ACS→IACS `+0.17`，IACS→responsibility
 `+0.38`；responsibility 相对 CCM 合计 `+0.99`。
@@ -207,8 +209,6 @@ PARSeg3Aux、LCRAux、LTX、FA-U-Mix、PCQ、HC2-S34。配置存在不等于完�
 | 实验 | Config | 目的 | 判读 |
 |---|---|---|---|
 | ADE MeanBoost-IACS | `Base/offsegccm_meanboost_iacs_r4_ade20k_160k-512x512.py` | 保留47.79的完整责任度统计，只有界调整已被centered消融证明重要的图内平均响应 | ≥47.79 说明均值定向增强有效；≥48.0 成为新的强模型 |
-| ADE Signature-RGE | `Base/offsegccm_signaturerge_r4_ade20k_160k-512x512.py` | 四张自身响应 + 六张平均响应签名协同；删除完整离散度矩阵 | ≥47.56 说明有符号均值协同补回RGE缺口；≥47.79 可作为更可读主模型 |
-| ADE Bipolar-RGE | `Base/offsegccm_bipolarrge_r4_ade20k_160k-512x512.py` | 将四张有符号响应拆成正/负两侧后分别masked-pool和激励 | ≥47.56 说明响应极性有用；≥47.79 可作为无矩阵主模型 |
 
 上一轮已写好的 no-CCM RGE / OCF / OCF+RGE 配置保留作历史候选，但经重新审查后不占当前训练槽：前者主动删除已验证的 CCM 增益，后两者与 OffSeg 已有的类别汇聚/回注高度重复。
 

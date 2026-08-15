@@ -1,6 +1,6 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-08-13
+> 最后更新：2026-08-16
 >
 > 当前结论：ADE20K 单次最佳为 **47.79 mIoU**，对应
 > `OffSegCCMIACS-r4 + non-centered responsibility`。
@@ -13,6 +13,9 @@
 > 协同信息。上一轮三个 response-pyramid 模型到至少 136k 均从未超过 46.3，现已停止；
 > 因日志已删除，只能判定该组合实现失败，不能把掉点单独归因给 pair 展开。当前三槽回到
 > 全局类别响应：均值增强、平均签名协同和正/负响应激励；不再使用区域池化或空间分支。
+> 其中 Signature-RGE/Bipolar-RGE 最终仅 **46.71/46.61**，均明显低于 RGE 47.56，
+> 说明把四个可旋转残差坐标固定解释成均值协同通道或正负极性通道并不成立；当前只剩
+> MeanBoost-IACS 结果未报告。
 >
 > 代码分支：`main`。47.79 对应的训练 commit、seed、checkpoint/log 持久路径尚未登记；
 > 不得自动假设当前 HEAD 与原训练现场完全相同。
@@ -648,7 +651,7 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmpairrge_r4_diagpyra
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccmpairrge_r4_fullpyramid_ade20k_160k-512x512.py 4
 ```
 
-### 12.10 ADE：全局响应模式分解（config-ready）
+### 12.10 ADE：全局响应模式分解（两项失败，一项待结果）
 
 新一轮只处理全图类别响应，不再引入空间邻域。责任度 masked pooling 将四张有符号残差
 响应汇总成当前图像、当前类别的平均响应模式，并与围绕该模式的离散响应区分开：
@@ -665,6 +668,12 @@ MeanBoost 保留完整 47.79 统计，在起点逐值等价的前提下只允许
 Signature-RGE 用四张自身响应和六张平均签名协同替代完整离散矩阵；Bipolar-RGE 将每张
 响应拆为正负两侧，直接保留“沿该方向哪一侧激活”的信息。三者都没有新 MLP、区域路径、
 第二预测分支或新损失类型。
+
+最终读数：Signature-RGE **46.71**，Bipolar-RGE **46.61**；分别比 RGE 47.56 低
+0.85/0.95，比 responsibility-IACS 47.79 低 1.08/1.18。静态代码核对未发现shape或
+广播错误；更符合证据的解释是四个 ACS 基轴只有子空间意义，没有稳定的逐轴语义。
+完整 IACS 对子空间内基旋转保持一致，而上述两个简化器都依赖特定坐标轴，因此丢失了
+这种自由度。该解释仍需结合训练needle验证，不能当作已证明因果。MeanBoost 尚待结果。
 
 ```bash
 bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_meanboost_iacs_r4_ade20k_160k-512x512.py 4
