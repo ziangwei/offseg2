@@ -1,6 +1,7 @@
 # Strong branch: retain the measured responsibility-IACS response and only
 # let the image-class mean response become moderately stronger or weaker.
-# The zero-initialised factor is exactly the 47.79 scorer at step 0; no new
+# With the factor at one this is algebraically the 47.79 scorer, although the
+# decomposed floating-point reductions are not bitwise identical.  No new
 # prediction branch, spatial path, MLP, or loss is introduced.
 _base_ = ['./offsegccmacs_ade20k_160k-512x512.py']
 
