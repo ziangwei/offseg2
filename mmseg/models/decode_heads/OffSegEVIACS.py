@@ -72,6 +72,8 @@ class OffSegEVIACS(OffSegCCMIACS):
                  in_channels,
                  new_channels,
                  num_classes,
+                 ev_pce=True,
+                 ev_sfr=False,
                  rcm_depth=1,
                  rcm_kernel=11,
                  rcm_mlp_ratio=4,
@@ -81,6 +83,10 @@ class OffSegEVIACS(OffSegCCMIACS):
                  **kwargs):
         super().__init__(in_channels=in_channels, new_channels=new_channels,
                          num_classes=num_classes, **kwargs)
+        self.ev_pce = bool(ev_pce)
+        self.ev_sfr = bool(ev_sfr)
+        if not (self.ev_pce or self.ev_sfr):
+            raise ValueError('enable at least one of ev_pce / ev_sfr')
         self.pce_levels = tuple(pce_levels)
         self.pce_pool_div = int(pce_pool_div)
         if self.pce_pool_div < 1:
@@ -91,15 +97,27 @@ class OffSegEVIACS(OffSegCCMIACS):
         rcm_norm_cfg = (dict(type='BN', requires_grad=True)
                         if rcm_norm == 'bn' else self.norm_cfg)
 
-        self.pce_split = [self.new_channels[i] for i in self.pce_levels]
-        self.pce = nn.Sequential(*[
-            RCM(sum(self.pce_split), kernel_size=int(rcm_kernel),
-                mlp_ratio=int(rcm_mlp_ratio), norm_cfg=rcm_norm_cfg)
-            for _ in range(int(rcm_depth))])
-        # One zero-initialised gate per level: identity start, per-level
-        # control over how much context is written back.
-        self.pce_gamma = nn.ParameterList(
-            [nn.Parameter(torch.zeros(1)) for _ in self.pce_levels])
+        rcm_kw = dict(kernel_size=int(rcm_kernel),
+                      mlp_ratio=int(rcm_mlp_ratio), norm_cfg=rcm_norm_cfg)
+
+        if self.ev_pce:
+            self.pce_split = [self.new_channels[i] for i in self.pce_levels]
+            self.pce = nn.Sequential(*[
+                RCM(sum(self.pce_split), **rcm_kw)
+                for _ in range(int(rcm_depth))])
+            # One zero-initialised gate per level: identity start, per-level
+            # control over how much context is written back.
+            self.pce_gamma = nn.ParameterList(
+                [nn.Parameter(torch.zeros(1)) for _ in self.pce_levels])
+
+        if self.ev_sfr:
+            # CGRSeg's second site: one RCM on FreqFusion's high-resolution
+            # branch after each fusion step -- 128, 64, 32 channels at strides
+            # 16/8/4.  RCM.gamma is zero-initialised, so this is identity at
+            # step 0 as well.  Far cheaper than PCE: the cost of an RCM is
+            # dominated by an 8*d^2 MLP, and three small d beat one d=448.
+            self.sfr = nn.ModuleList(
+                [RCM(c, **rcm_kw) for c in self.new_channels[::-1][1:]])
 
     def _pyramid_context(self, feats):
         """CGRSeg Eq. 1, then broadcast the context back to each level."""
@@ -121,13 +139,17 @@ class OffSegEVIACS(OffSegCCMIACS):
     def _build_feature(self, inputs):
         """OffSeg's decoder with one pyramid-context stage before fusion."""
         feats = [self.pre[i](inputs[i]) for i in range(len(inputs))]
-        feats = self._pyramid_context(feats)
+        if self.ev_pce:
+            feats = self._pyramid_context(feats)
 
         feats = feats[::-1]
         lowres_feat = feats[0]
-        for hires_feat, freqfusion in zip(feats[1:], self.freqfusions):
+        for idx, (hires_feat, freqfusion) in enumerate(
+                zip(feats[1:], self.freqfusions)):
             _, hires_feat, lowres_feat = freqfusion(hr_feat=hires_feat,
                                                     lr_feat=lowres_feat)
+            if self.ev_sfr:
+                hires_feat = self.sfr[idx](hires_feat)
             b, _, h, w = hires_feat.shape
             lowres_feat = torch.cat(
                 [hires_feat.reshape(b * 4, -1, h, w),
@@ -140,6 +162,10 @@ class OffSegEVIACS(OffSegCCMIACS):
         losses = super().loss_by_feat(seg_logits, batch_data_samples)
         # How hard the context is actually being written back.  Stuck at 0
         # means the pyramid was rejected and this head degenerated to 47.79.
-        losses['acc_pce_gamma'] = torch.stack(
-            [g.detach().abs().mean() for g in self.pce_gamma]).mean()
+        if self.ev_pce:
+            losses['acc_pce_gamma'] = torch.stack(
+                [g.detach().abs().mean() for g in self.pce_gamma]).mean()
+        if self.ev_sfr:
+            losses['acc_sfr_gamma'] = torch.stack(
+                [m.gamma.detach().abs().mean() for m in self.sfr]).mean()
         return losses
