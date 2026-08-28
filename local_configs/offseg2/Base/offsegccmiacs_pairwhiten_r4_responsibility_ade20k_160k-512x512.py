@@ -10,14 +10,32 @@
 # separable in the existing features.  The model has never computed anything
 # about a pair of classes.
 #
-# Mechanism, in the top-1 class's own residual coordinates:
-#   d   = U_a^T (e_c - e_a)              direction to the runner-up
-#   u   = M_a^-1 d / ||M_a^-1 d||        whitened   (pair_whiten=True)
-#         d / ||d||                      raw        (pair_whiten=False)
-#   t_i = q_{i,a} . u                    signed drift toward the rival
-#   logit_a -= g_a * relu(t_i)
+# Mechanism.  In this image every class k has a rival j(k): the class whose
+# image-adapted centre is most similar to k's own.  In class k's own residual
+# coordinates:
+#   d_k  = U_k^T (e_{j(k)} - e_k)        offset to that class's rival
+#   u_k  = M_k^-1 d_k / ||M_k^-1 d_k||   whitened   (pair_whiten=True)
+#          d_k / ||d_k||                 raw        (pair_whiten=False)
+#   b_k  = 0.5 (d_k . u_k)               Fisher midpoint between the centres
+#   t_ik = q_ik . u_k - b_k              signed margin past that midpoint
+#   logit_ik -= g_k * relu(t_ik)
+#
+# The midpoint is what makes relu selective.  Residuals are measured from the
+# class's OWN centre, so without b_k the drift carries a systematic +||d_k||/2
+# offset: on a structured simulation the uncentred version fires on 80.4% of
+# pixel-class pairs and penalises 49.6% of pixels of the CORRECT class, versus
+# 49.8% and 4.3% with the midpoint.  An earlier run of this config used the
+# uncentred form; its result bounds that form only, not the mechanism.
 # Only the direction is used, never its magnitude, so the inverse cannot blow
-# the term up.  New parameters: 150 per-class gates g_a.  No branch, no loss.
+# the term up.  New parameters: 150 per-class gates g_k.  No branch, no loss.
+#
+# Everything pair-dependent is computed once per image at CLASS resolution
+# (a [B,K,K,r] cross-projection table, a [B,K,K] centre similarity, K four-by-
+# four solves).  The only per-pixel work is one elementwise multiply-and-sum
+# over the [B,N,K,r] residual tensor the within-class term already builds.  An
+# earlier version picked the rival per pixel by top-2 and whitened per pixel;
+# that was about 7x slower for no extra information, since there are only K*K
+# distinct pairs, and it has been replaced.
 #
 # Joint read-out, pre-registered (W = whitened, R = raw):
 #   W >= 48.0 and W > R by a clear margin
@@ -32,9 +50,11 @@
 #       no effect; the between-class axis is closed with a clean negative
 #       rather than a confounded one.
 #   both < 47.4
-#       the drift penalty actively hurts.  Check `acc_pair_toward_rival`: if
-#       it sits near 0.5 the top-2 pair carries no signal at all, which is
-#       itself worth a sentence against the rerank-oracle framing.
+#       the drift penalty actively hurts.  `acc_pair_toward_rival` starts near
+#       0.5 by construction now that the margin is centred on the Fisher
+#       midpoint; what matters is whether it MOVES.  Staying pinned at 0.5
+#       while `acc_pair_scale` collapses means the rival direction carries no
+#       signal, which is itself worth a sentence against the rerank framing.
 # Needles: `acc_pair_drift` (mean |t|), `acc_pair_toward_rival` (fraction
 # drifting toward the runner-up), `acc_pair_penalty`, `acc_pair_scale`
 # (learned gate; collapsing to 0 means the model rejected the term).

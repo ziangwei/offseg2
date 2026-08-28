@@ -70,7 +70,7 @@ class FisherPairClassSubspace(ImageAdaptiveAffineClassSubspace):
             torch.full((self.num_classes,), inv_softplus))
 
     def rival_direction(self, centre_proj, basis, cls_repr, metric):
-        """Unit rival direction per image and class, [B,K,r].
+        """Unit rival direction and Fisher midpoint, [B,K,r] and [B,K].
 
         All of this runs at class resolution, never at pixel resolution.
         """
@@ -93,7 +93,8 @@ class FisherPairClassSubspace(ImageAdaptiveAffineClassSubspace):
         rival_proj = torch.gather(
             cross, 2,
             rival_idx[..., None, None].expand(-1, -1, 1, rank)).squeeze(2)
-        direction = rival_proj - centre_proj                       # [B,K,r]
+        offset = rival_proj - centre_proj                          # [B,K,r]
+        direction = offset
 
         if self.whiten:
             eye = torch.eye(rank, device=metric.device,
@@ -103,11 +104,16 @@ class FisherPairClassSubspace(ImageAdaptiveAffineClassSubspace):
             inverse, _ = torch.linalg.inv_ex(
                 metric.float() + self.pair_ridge * eye, check_errors=False)
             direction = torch.einsum(
-                'bkrs,bks->bkr', inverse.to(direction.dtype), direction)
+                'bkrs,bks->bkr', inverse.to(direction.dtype), offset)
 
         # Only the direction matters, never its magnitude.
-        return direction / direction.norm(
+        unit = direction / direction.norm(
             dim=-1, keepdim=True).clamp_min(self.eps)
+        # Fisher's boundary sits halfway between the two centres ALONG the
+        # decision direction.  Projecting the raw offset keeps this correct
+        # whether or not the direction was whitened.
+        midpoint = 0.5 * (offset * unit).sum(dim=-1)               # [B,K]
+        return unit, midpoint
 
     def forward(self, feat, cls_repr, ccm_logits):
         basis = self.orthonormal_basis()                          # [K,C,r]
@@ -133,8 +139,10 @@ class FisherPairClassSubspace(ImageAdaptiveAffineClassSubspace):
         scale = F.softplus(self.log_scale)
         correction = 0.5 * energy * scale.view(1, 1, -1)
 
-        unit = self.rival_direction(centre_proj, basis, cls_repr, metric)
-        drift = (projection * unit[:, None, :, :]).sum(dim=-1)     # [B,N,K]
+        unit, midpoint = self.rival_direction(
+            centre_proj, basis, cls_repr, metric)
+        drift = ((projection * unit[:, None, :, :]).sum(dim=-1)
+                 - midpoint[:, None, :])                           # [B,N,K]
         penalty = F.softplus(self.log_pair_scale).view(1, 1, -1) * F.relu(drift)
         correction = correction - penalty
 

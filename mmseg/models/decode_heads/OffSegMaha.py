@@ -65,7 +65,7 @@ from .OffSegACS import ImageAdaptiveAffineClassSubspace, OffSegCCMIACS
 class DualReadingClassSubspace(ImageAdaptiveAffineClassSubspace):
     """IACS scored by both `q^T M q` and `q^T M^-1 q`."""
 
-    def __init__(self, *args, maha_scale_init: float = 0.05,
+    def __init__(self, *args, maha_scale_init: float = 0.005,
                  maha_ridge: float = 1e-3, **kwargs):
         super().__init__(*args, **kwargs)
         if maha_scale_init <= 0:
@@ -82,7 +82,9 @@ class DualReadingClassSubspace(ImageAdaptiveAffineClassSubspace):
         eye = torch.eye(self.rank, device=metric.device,
                         dtype=torch.float32).view(1, 1, self.rank, self.rank)
         dense = metric.float() + self.maha_ridge * eye
-        inverse = torch.linalg.inv(dense)
+        # inv_ex does not raise on singular input, so unlike inv it never
+        # forces a device-to-host synchronisation on every iteration.
+        inverse, _ = torch.linalg.inv_ex(dense, check_errors=False)
         trace = inverse.diagonal(dim1=-2, dim2=-1).sum(-1)
         # Same convention as the forward metric: trace exactly r, so the two
         # quadratic terms are on comparable scales for every class and image.
@@ -131,7 +133,7 @@ class OffSegCCMIACSMaha(OffSegCCMIACS):
 
     def __init__(self, in_channels, new_channels, num_classes,
                  acs_rank=4, acs_scale_init=0.05,
-                 maha_scale_init=0.05, maha_ridge=1e-3, **kwargs):
+                 maha_scale_init=0.005, maha_ridge=1e-3, **kwargs):
         super().__init__(
             in_channels=in_channels, new_channels=new_channels,
             num_classes=num_classes, acs_rank=acs_rank,
