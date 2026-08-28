@@ -1,66 +1,48 @@
 # -*- coding: utf-8 -*-
-"""Between-class decision geometry: the rival direction, whitened.
+"""Between-class decision geometry: each class against its rival, whitened.
 
 The gap this fills
 ------------------
-Everything this project has built models WITHIN-class geometry: a residual
-subspace per class, a per-image scatter inside it, competitive responsibility
-for pooling it.  Every class is then scored independently and argmax decides.
-The model never computes anything about a PAIR of classes.
-
-The diagnostics say the errors are between-class:
-
-    GT recall@2 = 54.8%, @3 = 71.8%   the right class is usually a candidate
-    top-2 rerank oracle  ~ +18.38     deciding between candidates is the lever
-    top confusion pairs  98-100%      the discriminative direction already
-      linearly separable in features    exists in the features
-
-So the largest measured headroom sits on an axis the method has never touched.
+Everything built so far models WITHIN-class geometry: a residual subspace per
+class, a per-image scatter inside it, competitive responsibility for pooling
+it.  Classes are then scored independently and argmax decides; the model never
+computes anything about a PAIR of classes.  The diagnostics say the errors are
+between-class: GT recall@2 54.8%, top-2 rerank oracle about +18.38, and the
+top confusion pairs are 98-100% linearly separable in the existing features.
 
 The mechanism
 -------------
-For pixel i, let `a` be its current top-1 class and `c` its runner-up.  Both
-centres are image-adapted, so the raw between-class direction is `e_c - e_a`.
-Fisher's classical result is that the right direction to decide along is not
-that difference but the difference whitened by the within-class scatter --
-and this model already estimates that scatter, per image, per class.
+In this image, every class k has a main rival j(k): the class whose adapted
+centre is most similar to its own.  In class k's own residual coordinates,
 
-In class a's own residual coordinates::
+    d_k   = U_k^T (e_{j(k)} - e_k)              rival direction
+    u_k   = M_k^-1 d_k / ||M_k^-1 d_k||         whitened (pair_whiten=True)
+            d_k / ||d_k||                        raw      (pair_whiten=False)
+    t_ik  = q_ik . u_k                          drift toward the rival
+    logit_ik -= g_k * relu(t_ik)
 
-    d   = U_a^T (e_c - e_a)                 rival direction
-    u   = M_a^-1 d / ||M_a^-1 d||           Fisher direction (whiten=True)
-          d / ||d||                          raw direction   (whiten=False)
-    t_i = q_{i,a} . u                       signed drift toward the rival
-    logit_a  -=  g_a * relu(t_i)
+A pixel that has drifted from a class's centre toward that class's rival loses
+score for that class.  `relu` keeps it one-sided.  Fisher's result is that the
+direction to decide along is not the raw centre difference but the difference
+whitened by within-class scatter -- and this model already estimates that
+scatter, per image, per class.  `pair_whiten` is the single variable between
+the two configs of this round.
 
-A pixel that has drifted from its own centre toward its runner-up, measured
-along the whitened rival direction, loses confidence in the class it is
-currently winning.  `relu` keeps the term one-sided: pixels on the far side
-from the rival are untouched.
+Why it is cheap
+---------------
+Everything that depends on the class pair is computed once per image at class
+resolution: a [B,K,K,r] table of cross projections, a [B,K,K] centre-similarity
+for rival selection, K four-by-four solves.  All of that is thousands of
+elements.  The only per-pixel work is one elementwise multiply-and-sum over the
+[B,N,K,r] residual tensor that the within-class term already builds -- the same
+order as the existing energy term, with no gather, no top-k and no per-pixel
+matrix product.
 
-`whiten` is the single variable between the two runs of this round.  If the
-whitened version wins and the raw one does not, the within-class scatter is
-doing the work and the Fisher reading is the contribution.  If both win
-equally, the pairwise term matters and the whitening does not -- a simpler
-model, and still a finding.  If neither wins, the between-class axis closes
-with one clean negative instead of a confounded one.
+Cost: K per-class positive gates, i.e. 150 parameters.  No branch, no loss.
 
-Cost
-----
-`m` per-class positive gates, i.e. 150 parameters.  No branch, no gate module,
-no loss.  The top-2 indices are taken from the detached post-CCM logits, so
-the selection is an index, not a differentiable path -- gradients still reach
-the features, the basis and the centres through `q` and `d`.  The K x K table
-of cross projections is 150*150*4 floats per image; the r x r inverses are
-150 four-by-four solves.  Both are negligible against the existing
-[B, N, K, r] projection.
-
-Attribution
------------
-Fisher's linear discriminant and within-class whitening are classical.  What
-this may claim is applying that reading to a per-image, per-class, low-rank,
-competitively-pooled scatter, on the pair a pixel is actually deciding
-between -- not the invention of the discriminant.
+Attribution: Fisher's linear discriminant and within-class whitening are
+classical.  The claim here is applying that reading to a per-image, per-class,
+low-rank, competitively-pooled scatter -- not the invention of either.
 """
 
 import math
@@ -74,7 +56,7 @@ from .OffSegACS import ImageAdaptiveAffineClassSubspace, OffSegCCMIACS
 
 
 class FisherPairClassSubspace(ImageAdaptiveAffineClassSubspace):
-    """IACS plus a one-sided drift penalty along the rival direction."""
+    """IACS plus a one-sided drift penalty along each class's rival direction."""
 
     def __init__(self, *args, pair_scale_init: float = 0.05,
                  whiten: bool = True, pair_ridge: float = 1e-3, **kwargs):
@@ -87,62 +69,62 @@ class FisherPairClassSubspace(ImageAdaptiveAffineClassSubspace):
         self.log_pair_scale = nn.Parameter(
             torch.full((self.num_classes,), inv_softplus))
 
-    def _rival_drift(self, projection, centre_proj, basis, cls_repr,
-                     metric, ccm_logits):
-        """Signed drift toward the runner-up, per pixel. Returns [B,N] and the
-        top-1 index [B,N]."""
-        batch, pixels, classes, rank = projection.shape
+    def rival_direction(self, centre_proj, basis, cls_repr, metric):
+        """Unit rival direction per image and class, [B,K,r].
 
-        # The candidate pair is an index decision, taken on detached logits.
+        All of this runs at class resolution, never at pixel resolution.
+        """
+        batch, classes, rank = centre_proj.shape
+
+        # Who each class competes with in THIS image: the most similar adapted
+        # centre.  Detached -- it is an index decision, not a gradient path.
         with torch.no_grad():
-            top2 = torch.topk(ccm_logits.detach(), 2, dim=2).indices
-        own_idx, rival_idx = top2[..., 0], top2[..., 1]            # [B,N]
+            unit_centres = F.normalize(cls_repr.detach(), dim=-1)
+            similarity = torch.bmm(unit_centres, unit_centres.transpose(1, 2))
+            similarity.diagonal(dim1=1, dim2=2).fill_(-float('inf'))
+            rival_idx = similarity.argmax(dim=-1)                 # [B,K]
 
-        # cross[b, j, k] = U_k^T e_j : every centre in every class's basis.
-        cross = torch.einsum('bjc,kcr->bjkr', cls_repr, basis)
-        flat = cross.reshape(batch, classes * classes, rank)
-        pair_idx = (rival_idx * classes + own_idx).unsqueeze(-1).expand(
-            -1, -1, rank)
-        rival_in_own = torch.gather(flat, 1, pair_idx)             # [B,N,r]
-        own_in_own = torch.gather(
-            centre_proj, 1, own_idx.unsqueeze(-1).expand(-1, -1, rank))
-        direction = rival_in_own - own_in_own                       # [B,N,r]
+        # cross[b, k, j] = U_k^T e_j, as one explicit matmul.
+        flat_basis = basis.permute(1, 0, 2).reshape(
+            self.embed_dims, classes * rank)                      # [C, K*r]
+        cross = (cls_repr @ flat_basis).view(
+            batch, classes, classes, rank).permute(0, 2, 1, 3)    # [B,k,j,r]
+
+        rival_proj = torch.gather(
+            cross, 2,
+            rival_idx[..., None, None].expand(-1, -1, 1, rank)).squeeze(2)
+        direction = rival_proj - centre_proj                       # [B,K,r]
 
         if self.whiten:
             eye = torch.eye(rank, device=metric.device,
                             dtype=torch.float32).view(1, 1, rank, rank)
-            inverse = torch.linalg.inv(
-                metric.float() + self.pair_ridge * eye).to(metric.dtype)
-            own_inv = torch.gather(
-                inverse, 1,
-                own_idx[..., None, None].expand(-1, -1, rank, rank))
-            direction = torch.einsum('bnrs,bns->bnr', own_inv, direction)
-        # Only the DIRECTION is used, so the whitening cannot blow the term up.
-        direction = direction / direction.norm(
+            # inv_ex does not raise on singular input, so unlike inv it never
+            # forces a device-to-host synchronisation.
+            inverse, _ = torch.linalg.inv_ex(
+                metric.float() + self.pair_ridge * eye, check_errors=False)
+            direction = torch.einsum(
+                'bkrs,bks->bkr', inverse.to(direction.dtype), direction)
+
+        # Only the direction matters, never its magnitude.
+        return direction / direction.norm(
             dim=-1, keepdim=True).clamp_min(self.eps)
 
-        residual = torch.gather(
-            projection, 2,
-            own_idx[..., None, None].expand(-1, -1, 1, rank)).squeeze(2)
-        drift = (residual * direction).sum(dim=-1)                  # [B,N]
-        return drift, own_idx
-
     def forward(self, feat, cls_repr, ccm_logits):
-        basis = self.orthonormal_basis()                            # [K,C,r]
+        basis = self.orthonormal_basis()                          # [K,C,r]
         pixel_proj = torch.einsum('bnc,kcr->bnkr', feat, basis)
         centre_proj = torch.einsum('bkc,kcr->bkr', cls_repr, basis)
-        projection = pixel_proj - centre_proj[:, None, :, :]
+        projection = pixel_proj - centre_proj[:, None, :, :]       # [B,N,K,r]
 
         metric, mix, anisotropy, statistics = self.image_metric(
             projection, ccm_logits)
 
-        q = projection.permute(0, 2, 1, 3)                          # [B,K,N,r]
+        q = projection.permute(0, 2, 1, 3)                         # [B,K,N,r]
         spectrum = self.direction_spectrum()
         if self.spectrum_raw is not None:
             sqrt_spectrum = spectrum.to(dtype=q.dtype).sqrt().view(
                 1, self.num_classes, 1, self.rank)
             q = q * sqrt_spectrum
-        energy = (q * (q @ metric)).sum(dim=-1).permute(0, 2, 1)
+        energy = (q * (q @ metric)).sum(dim=-1).permute(0, 2, 1)   # [B,N,K]
         statistics.update(
             iacs_spectrum_std=spectrum.detach().std(unbiased=False),
             iacs_spectrum_min=spectrum.detach().min(),
@@ -151,12 +133,10 @@ class FisherPairClassSubspace(ImageAdaptiveAffineClassSubspace):
         scale = F.softplus(self.log_scale)
         correction = 0.5 * energy * scale.view(1, 1, -1)
 
-        drift, own_idx = self._rival_drift(
-            projection, centre_proj, basis, cls_repr, metric, ccm_logits)
-        gate = F.softplus(self.log_pair_scale)[own_idx]              # [B,N]
-        penalty = gate * F.relu(drift)
-        correction = correction.scatter_add(
-            2, own_idx.unsqueeze(-1), (-penalty).unsqueeze(-1))
+        unit = self.rival_direction(centre_proj, basis, cls_repr, metric)
+        drift = (projection * unit[:, None, :, :]).sum(dim=-1)     # [B,N,K]
+        penalty = F.softplus(self.log_pair_scale).view(1, 1, -1) * F.relu(drift)
+        correction = correction - penalty
 
         statistics.update(
             pair_drift=drift.detach().abs().mean(),
