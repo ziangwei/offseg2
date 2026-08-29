@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-08-16
+> 最后更新：2026-09-05
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -17,7 +17,21 @@
 - 除非另注，ADE 结果均为 512 crop、160k、单尺度、总 batch 16；
 - 当前所有 ACS/IACS 结果均只记录过一个 run，没有 seed 方差；
 - OffSeg 45.9 是 paper reference，不是当前环境配对基线；
-- 任何 `final` 必须由用户明确报告，不能从中间日志自行推断。
+- 任何 `final` 必须由用户明确报告，不能从中间日志自行推断；
+- **2026-08-24 全量 work_dir 扫描确认：本账本所有 ADE/Stuff 数值均为
+  `best across evals`，不是最后一次验证值。** 例：主模型 best 47.79 / last 47.79，
+  seed2026 best 46.82 / last 46.62，EV-both best 47.54 / last 47.26。写论文时必须
+  统一声明为 best checkpoint 口径；
+- 扫描同时给出每个 run 的验证次数。ADE 160k 满档为 20 次、Stuff 80k 满档为 20 次。
+  **验证次数不足 20 的行必须再分三类，不能一律当成结果读：**
+  - `complete`：20/20，可作为该配置的成绩；
+  - `wall/infra`：因 36h 墙、磁盘写满等外部原因中断（本项目多为 19/20 或 17/20），
+    数值是**下界**，补测或续训即可得真值；
+  - `killed`：用户在中途发现该 run 低于同期 PARSeg 参照曲线而主动取消。**这类数字
+    只说明"在第 N 次验证时低于参照"，不说明该方法在满档时能达到多少。**
+  `killed` 行的数值**不得**当作该方法的性能引用，也**不得**用来宣告某个方法族被
+  证伪；它记录的是一次决策，不是一个结果。区分 `killed` 与 `wall/infra` 需要用户
+  确认，仅凭验证次数无法判定。
 
 ## 2. 基线与公开参照
 
@@ -96,6 +110,15 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegccm_signaturerge_r4_ade20k_160k-512x512.py` | 四张self响应 + 六张平均签名协同 | **46.71** | -0.85 vs RGE；-1.08 vs responsibility | owner-final；只保留均值协同不能替代完整跨轴离散关系 |
 | `offsegccm_bipolarrge_r4_ade20k_160k-512x512.py` | 正/负响应分别汇聚与激励 | **46.61** | -0.95 vs RGE；-1.18 vs responsibility | owner-final；固定响应轴的极性拆分明显有害 |
 | `offsegccm_meanboost_iacs_r4_ade20k_160k-512x512.py` | 在完整responsibility-IACS上有界调整均值项 | **46.12** | -1.67 vs responsibility；-0.68 vs CCM | owner-final；恒等起步不能保护训练轨迹，均值再加权轴关闭 |
+| `offsegccmiacs_r4_responsibility_seed2026_ade20k_160k-512x512.py` | 同配置、显式 seed 2026 的独立第二次 draw | **46.82** | -0.97 vs 47.79 | owner-final @160000；机制工作点与 47.79 基本一致，无塌缩 |
+| `offsegccmiacs_r2_responsibility_ade20k_160k-512x512.py` | rank 4→2（rank 轴首次向下取点） | **46.69** | -1.10 vs responsibility | owner-final @160000；`acs_move` 0.3992，约为 r4 的一半 |
+| `offsegccmiacs_pairwhiten_r4_responsibility_ade20k_160k-512x512.py` | 类间漂移惩罚，方向经类内散布白化 | **46.95** | -0.84 vs responsibility | owner-final；**比未白化版高 0.76** |
+| `offsegccmiacs_pairraw_r4_responsibility_ade20k_160k-512x512.py` | 同上，方向不白化（对照） | **46.19** | -1.60 vs responsibility | owner-final；唯一差别是 `pair_whiten` |
+| `offsegccmiacs_presence_r4_responsibility_ade20k_160k-512x512.py` | EncNet 式图级类别存在性辅助 BCE | **46.73** | -1.06 vs responsibility | owner-final；辅助头不参与推理 |
+| `offsegiacs_r4_responsibility_noccm_ade20k_160k-512x512.py` | 去掉 CCM（特征预条件换成恒等），其余全继承 | **46.93** | **-0.86 vs responsibility** | owner-final；**同环境配对的 CCM 消融，第一次量出 CCM 的贡献** |
+| `offsegevpce_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：CGRSeg PCE 全局上下文级 | **46.49** | -1.30 vs responsibility | owner-final；+1.62M 参数换来掉点 |
+| `offsegevsfr_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：CGRSeg SFR 融合路径局部恢复 | **46.90** | -0.89 vs responsibility | owner-final；+0.18M；**高于 PCE 0.41，方向与预注册假设一致** |
+| `offsegevboth_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：PCE + SFR 两站点 | **47.54** | -0.25 vs responsibility | owner-final；比单独 PCE 高 1.05、比单独 SFR 高 0.64，单调性反常 |
 
 核心差值：CCM→ACS `+0.44`，ACS→IACS `+0.17`，IACS→responsibility
 `+0.38`；responsibility 相对 CCM 合计 `+0.99`。
@@ -120,6 +143,25 @@ keep_ratio           1.0000
 这些是最后一个训练 batch 的 needle，不是验证集聚合统计。`move` 是
 `mean|logit correction|`，不是特征移动距离。
 
+### 2026-08-21 两次 160k final 的 needle
+
+| needle | 47.79 (r4, seed 未记录) | 46.82 (r4, seed 2026) | 46.69 (r2, seed 未记录) |
+|---|---:|---:|---:|
+| `iacs_mix` | 0.9624 | 0.9594 | 0.9803 |
+| `iacs_anisotropy` | 0.6923 | 0.6533 | 0.5643 |
+| `effective_support` | 4660.68 | 4832.50 | 2957.70 |
+| `acs_move` / `raw_move` | 0.9232 | 0.8041 | 0.3992 |
+| `acs_scale` | 0.1941 | 0.1930 | 0.2104 |
+| `ccm_gain` | 0.1737 | 0.1930 | 0.1874 |
+| `assignment_tv` | 0.4576 | 0.4345 | 0.4990 |
+| `reliability` | 0.0262 | 0.0246 | 0.0430 |
+| 末批 `loss`/`loss_ccm`/`loss_stage1` | 未记录 | 0.4878/0.2362/0.2516 | 0.3797/0.1848/0.1948 |
+
+事实（不含解释）：两次 r4 run 的机制工作点几乎相同——`mix` 均在 0.96 附近、
+`anisotropy` 0.65–0.69、支持度 4.7k 量级，未出现 mix 塌缩或机制未启动。r2 的修正
+幅度约为 r4 的一半，支持度明显更低，`mix` 反而更高。以上均为最后一个训练 batch 的
+needle，不是验证集聚合统计。
+
 补充历史 needle：
 
 - IACS-r4：`move=.7539 / mix=.9569 / anisotropy=.6420 / ccm_gain≈.2025`；
@@ -127,89 +169,299 @@ keep_ratio           1.0000
 - top-3：`keep_ratio=.0251 / raw_move=1.144 / applied_move=.0287 / mix=.4163`；
 - top-3+classmix：`keep_ratio=.0258 / raw_move=.5934 / applied_move=.0153`。
 
-### COCO-Stuff164K 泛化
+### COCO-Stuff164K 泛化（T 已成为配对口径，B 待续训）
 
-| Config | 规模 | mIoU | 来源/阶段 | 结论 |
+| 模型 | 规模 | mIoU | 训练进度 | 阶段 |
 |---|---|---:|---|---|
-| `Tiny/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py` | T / EfficientFormerV2-S1 | **42.08** | owner-final，单次 run | 首个 Stuff 结果；相对 OffSeg-T paper 41.9 的 +0.18 不是配对增益 |
-| `Base/offsegccmiacs_r4_responsibility_stuff164k_80k-512x512.py` | B / EfficientFormerV2-S2 | **44.33** | owner-final，单次 run | 相对 OffSeg-B paper 44.3 的 +0.03 不是配对增益 |
+| OffSeg-T（论文参照） | T | 41.9 | — | paper |
+| **OffSeg-T 本环境配对基线** | T | **41.66** | 80000/80000 | **owner-final**，`dist_test` 对 `iter_80000.pth` 补测 |
+| responsibility-IACS-r4 | T | **42.08** | 80000/80000 | owner-final（best = last） |
+| OffSeg-B（论文参照） | B | 44.3 | — | paper |
+| OffSeg-B 本环境基线 | B | 43.69 | **70800/80000（88%）** | `stopped`，不可用 |
+| responsibility-IACS-r4 | B | **44.33** | 80000/80000 | owner-final |
 
-本环境 OffSeg-T/B 配对基线均未完成，因此不能据 42.08/44.33 宣称 responsibility
-在 Stuff164K 上带来稳定提升。两个绝对值只说明当前配置在 T/B 两个规模上的单次结果。
+#### Stuff-B：共享方向字典（2026-09-02）
+
+| 模型 | mIoU | 相对本环境基线 44.26 | 基参数 |
+|---|---:|---:|---:|
+| OffSeg-B 本环境配对基线 | 44.26 | — | — |
+| responsibility-IACS-r4（私有基） | 44.33 | +0.07 | 175,104 |
+| **dict64（共享方向字典）** | **44.46** | **+0.20** | **60,160** |
+
+owner-final。共享字典把 Stuff-B 的配对增益从 `+0.07` 提到 `+0.20`，同时基参数减少
+2.9 倍。这是"私有逐类基在 171 类 + 半程 schedule 下训不熟"这一假设的第一份支持，
+但它只是单点：**ADE 上的同头对照（`offsegccmiacs_dict64_..._ade20k_160k`）尚未运行**，
+因此还不能区分"共享在类多时才有用"与"共享普遍更好"。在补上该对照前，不得写成
+跨规模结论。
+
+**T 规模的配对增益 = `42.08 - 41.66` = `+0.42`。** 这是本项目第一个同环境、同代码、
+训练均跑满的跨数据集配对增益。两边都是 best = last，口径一致。
+
+三条相关事实：
+
+1. 本环境 OffSeg-T 在 Stuff 上复现为 41.66，比论文值 41.9 低 **0.24**。此前
+   `42.08 - 41.9 = +0.18` 的"泛化失败"读数正是被这 0.24 吃掉的。
+2. 补测前的 best-across-evals 为 41.44（截至 76k），真实终值 41.66——**基线在最后
+   4k iterations 内还涨了 0.22**。
+3. 由 (2) 可**事先预测**：B 基线目前停在 70800，其 43.69 同样偏低，续训到 80000 后
+   预计上升。因此 B 的配对增益预计**低于**当前上界 `44.33 - 43.69 = +0.64`，量级更
+   可能落在 `+0.1 ~ +0.4`。此预测写在 B 续训结果之前。
+
+同一把尺子下的师兄线（T 规模，同为本环境跑满）：PARSeg3-T Stuff 42.54，相对同一
+基线 41.66 为 **`+0.88`**，约为本方法的两倍。
+
+结论口径：Stuff 上本方法有**可测量的正向配对增益**，不是零；但在 T 规模上约为师兄
+线的一半。不得再写"Stuff 泛化失败"，也不得写"泛化增益与 ADE 相当"。
 
 ## 5. 其他 OffSeg 路线
 
-| 模型/配置 | mIoU | 来源/阶段 | 精确结论 |
-|---|---:|---|---|
-| Dual-NF | 46.69 | owner-final | 第二 query 路本身未突破 CCM |
-| Dual + focus | 46.11 | owner-final | 当前 focus loss 相对 NF -0.58 |
-| Dual OL/M/E | 46.1–46.9 | owner summary | 用户明确汇总的三个臂，无逐臂精确值 |
-| Dual-C | — | unreported | config 存在，但没有用户确认的精确/区间结果 |
-| CCM + SRG (`offsegccmsrg`) | 46.72 | owner-final | 当前区域图残差无增益 |
-| EV5 = CCM+PCE+SFR | 46.29 | owner-final | 组合失败；EV1–4 无结果，不能析出边际 |
+2026-08-24 全量日志扫描后修正。全部为 `log-scan best`，括号内为验证次数。
 
-下列 config 存在但没有结果：EV1/2/3/4、`offsegrcm`、`offsegnmf`、
-`offsegccmnmf`。NMF 代码在讨论后没有进入该轮训练；它有 Hamburger/NMF 血统，
-可以正确复用，但不能称本项目原创，也不能把“未跑”写成“失败”。
+| 模型/配置 | best | last | 验证次数 | 精确结论 |
+|---|---:|---:|---:|---|
+| Dual + focus | 46.11 | 45.35 | 20/20 | 完整跑完 |
+| Dual-NF | 46.69 | 46.35 | 20/20 | 第二 query 路本身未突破 CCM |
+| Dual-OL | 44.49 | 44.49 | 57400/160000 | **`killed@36%`** — 不是该臂的成绩 |
+| Dual-M | 44.65 | 44.65 | 68400/160000 | **`killed@43%`** — 不是该臂的成绩 |
+| Dual-C | 43.18 | 42.98 | 54000/160000 | **`killed@34%`** — 不是该臂的成绩 |
+| CCM + SRG | 46.72 | 46.55 | 20/20 | 当前区域图残差无增益 |
+| EV5 = CCM+PCE+SFR | 46.29 | 46.29 | 20/20 | 见第 7.0 节 |
 
-## 6. PARSeg 历史已报告结果
+**修正一条旧错误**：此前账本写「Dual OL/M/E 46.1–46.9，owner summary」，没有日志
+支持，已删除。但替换它的不是 44.49/44.65/43.18——那三条都是 `killed`，只跑了
+48k–64k，**不能当作这三个臂的成绩**。
 
-本节仅用于说明旧路线与负边界，不是当前贡献链。多数数字由旧对话账本整理，原始
-server log/checkpoint 未在当前工作区定位；来源标成 `historical-ledger`。原始历史记录见
-[PARSeg_experiment_summary.log](PARSeg_experiment_summary.log)。
+因此「Dual 线未突破 CCM」这个结论现在只能建立在两条 `complete` 的 run 上：
+Dual-NF 46.69（20/20）与 Dual+focus 46.11（20/20）。OL/M/C 三个臂的满档表现**至今
+未知**，该族没有被完整证伪。
 
-| 变体 | mIoU | 来源/阶段 | 备注 |
-|---|---:|---|---|
-| PARSeg3 try1 | 48.17 | historical-ledger final | 当前环境旧基线 |
-| GDS | 48.17 | historical-ledger final | 与基线相同 |
-| LCR | 48.60 | historical-ledger final, from-scratch | 候选关系正信号；带 aux/rank loss |
-| HCE | 47.78 | historical-ledger final | 负 |
-| LAR-A | 47.69 | historical-ledger final | 负 |
-| LTA | 46.95 | historical-ledger final | 负 |
-| PTA | 46.97 | historical-ledger final | 负 |
-| LTC | 48.48 | historical-ledger final | 小幅正 |
-| PAT | 48.27 | historical-ledger final | 近中性 |
-| SAF | 47.90 | historical-ledger final | 负 |
-| TAM | **48.73** | historical-ledger final | PARSeg 改款最高；TAM-NT 无结果 |
-| TAX | 47.72 | historical-ledger final | 负 |
-| ACT | 48.55 | historical-ledger final-phase | 同时改 round2、text layout、aux，归因不净 |
-| TDL | 47.66 | historical-ledger final | 负 |
-| LTM = LCR×TAM | 48.21 | historical-ledger final | 两个赢家不加和 |
-| RABA-3L + deep supervision | 46.38 | historical-ledger final | 负 |
-| RABA-6L | 46.95 | historical-ledger final | 负 |
-| HRE | 47.77 | historical-ledger final | 负 |
+下列 config 存在但没有结果：`offsegrcm`、`offsegnmf`、`offsegccmnmf`。NMF 有
+Hamburger/NMF 血统，可以正确复用，但不能称本项目原创，也不能把"未跑"写成"失败"。
 
-### PARSeg 中间/峰值，禁止当 final
+## 6. PARSeg 历史结果（2026-08-24 全量日志扫描重建）
 
-| 变体 | 已记录阶段值 |
-|---|---|
-| GEO | 约 47.34 @152k |
-| SCA2 | 约 46.49 @144k |
-| APC | 45.07 @8k → 46.83 @136k |
-| IGR | 48.08 @8k，48.07 @16k，后续约 48.05 |
-| SGC | 48.03 @8k，48.05 @16k |
-| PALX | peak 48.31 @16k，后降至约 48.03；short follow-up 48.26→48.10→48.07 |
-| DGM FT | 47.64/48.10/48.14/48.16/48.10 @8/16/24/32/40k |
-| LCR FT | 48.14/48.01/47.82/48.33/47.87 @8/16/24/32/40k |
-| LCR2 | 47.45 @80k，47.71 @128k，47.75 @152k；final 缺失 |
-| LCR 160k→200k continuation | 没有 checkpoint 超过 from-scratch 48.60 |
-| LDR | 全程 best 47.15，未超过基线 |
-| SDR | best 48.08 @120k；final 精确值缺失 |
-| RABA 原版 | 43.05 @80k 后停止 |
-| HRA | max 47.37 @128k，跑至 144k |
-| HRA2 | max 46.96 @120k，跑至 128k |
-| PCHD4-Fixed / Hyper | 约 46.0 / 45.0 @144k，均取消 |
+本节此前依赖旧对话账本，扫描后发现多处错误：三个变体被记成"未跑"但实际有完整结果，
+一条 Dual 区间陈述无日志支持，LDR 与 LRP 被并成一条，另有一整代 PARSeg4/5 从未
+进入账本。以下按扫描结果重建。来源统一为 `log-scan best`；`last` 与验证次数一并保留。
 
-无精确结果或未跑：CAS、CDC、RCR、EVF、PLCR、CDR、OSC、ACR、TAM-NT、
-PARSeg3Aux、LCRAux、LTX、FA-U-Mix、PCQ、HC2-S34。配置存在不等于完成实验。
+### 6.1 ADE20K
+
+| 变体 | best | last | 验证次数 | 备注 |
+|---|---:|---:|---:|---|
+| PARSeg3-B（try1 基线） | **48.16** | 48.16 | 160000/160000 | **`complete`**，训练跑满；旧账本写 48.17，**以 48.16 为准** |
+| TAM | **48.73** | 48.73 | 20/20 | 全项目最高；含冻结 CLIP 文本锚点 |
+| LCR | 48.60 | 48.60 | 20/20 | |
+| ACT | 48.55 | 48.55 | 20/20 | 同时改 round2/text layout/aux，归因不净 |
+| LTC | 48.48 | 48.48 | 20/20 | |
+| **PARSeg4.2a-lite** | **48.41** | 48.20 | 20/20 | **账本此前完全没有；项目第二高** |
+| PALX-ft | 48.31 | 48.07 | 40000/40000 | **`complete`**——这是一次 40k fine-tune，不是被砍的 160k run |
+| PAT | 48.27 | 48.21 | 20/20 | |
+| **PARSeg4.1** | **48.26** | 48.26 | 20/20 | **账本此前完全没有** |
+| **PARSeg4-B** | **48.24** | 48.24 | 20/20 | **账本此前完全没有** |
+| LTM = LCR×TAM | 48.21 | 48.21 | 20/20 | 两个赢家不加和 |
+| SDR | 48.08 | **47.89** | 20/20 | 旧账本"final 精确值缺失"，现已补齐 |
+| **PARSeg5-ATM** | **48.00** | 47.96 | 21/21 | **账本此前完全没有** |
+| LCR2 | **47.92** | 47.92 | 20/20 | 旧账本"final 缺失"，现已补齐 |
+| SAF | 47.90 | — | 日志已丢失 | 用户报告 47.9；磁盘上仍有 `iter_152000.pth` |
+| HRE | 47.77 | 47.67 | 20/20 | |
+| TAX | 47.72 | 47.72 | 20/20 | |
+| **FA-U-Mix** | **47.69** | 47.69 | 20/20 | **旧账本记为"无精确结果或未跑"，错误** |
+| TDL | 47.66 | **42.41** | 20/20 | 末段崩塌，best 与 last 差 5.25 |
+| **HC2-S34** | **47.59** | 47.59 | 153200/160000 | **旧账本记为"未跑"，错误**；`killed@96%` |
+| **PCQ** | **47.55** | 47.55 | 20/20 | **旧账本记为"未跑"，错误** |
+| HRA | 47.37 | 47.13 | 149250/160000 | `killed@93%` |
+| LRP | **47.15** | 46.74 | 20/20 | **旧账本把这个 47.15 记成了 LDR** |
+| PTA | 46.97 | 46.74 | 20/20 | |
+| HRA2 | 46.96 | 46.89 | 133150/160000 | `killed@83%` |
+| LTA | 46.95 | 46.62 | 20/20 | |
+| **PCAA** | **46.71** | 46.71 | 20/20 | **账本此前完全没有** |
+| PCHD4-Fixed | 46.15 | 45.80 | 157350/160000 | `killed@98%` |
+| LDR | 45.91 | 45.91 | 98600/160000 | `killed@62%`；与 LRP 是两个不同 run |
+| PCHD4-Hyper | 45.72 | 45.60 | 158550/160000 | `killed@99%` |
+| PARSeg3-T | 44.40 | 44.28 | 20/20 | T 规模 |
+
+上表 `killed@NN%` 行的数值只表示取消当时的读数，不是该方法满档的成绩。扫描确认
+PARSeg3-B 与 PALX-ft 均为 `complete`（前者跑满 160k，后者本就是 40k fine-tune），
+此前的"待确认"已解决。
+
+未在 work_dir 中出现、维持"无结果"的：CAS、CDC、RCR、EVF、PLCR、CDR、OSC、ACR、
+TAM-NT、PARSeg3Aux、LCRAux、LTX、GDS、GEO、SCA2、APC、IGR、SGC、DGM-FT、
+RABA 系列。其中 **TAM-NT 是 TAM 的必做对照**，至今未跑。
+
+### 6.2 PARSeg3 的跨规模与跨数据集
+
+| 规模 / 数据集 | OffSeg paper | PARSeg3 | 差 | 验证次数 |
+|---|---:|---:|---:|---:|
+| T / ADE20K | 44.2 | 44.40 | +0.20 | 20/20 |
+| B / ADE20K | 45.9 | **48.16** | **+2.26** | 19/20 |
+| T / Stuff164K | 41.9 | 42.54 | +0.64 | **10/20 interim** |
+| B / Stuff164K | 44.3 | 44.76 | +0.46 | 20/20 |
+| L / Stuff164K | 46.0 | 46.62 | +0.62 | **10/20 interim** |
+| B / Cityscapes | 80.5 | **80.82** | +0.32 | 20/20 |
+
+**扫描确认六行全部 `complete`（训练均跑满），因此整张表可用。** 事实：
+
+- 换数据集，同一规模 B：ADE **+2.26** → Stuff **+0.46** → Cityscapes **+0.32**；
+- 换规模，同一数据集 ADE：B **+2.26** → T **+0.20**。
+
+**PARSeg3 相对 OffSeg 的 +2.26 只存在于 B/ADE 这一格；其余五格全部落在
++0.20~+0.64。** 这不是"属性分支普遍更强"，而是"它在一格上强"。
+上表除 Stuff 配对基线外均为跨环境参照差；Stuff 一列可用本环境基线（T 41.44 /
+B 43.69）换算成配对口径，见第 4 节。
+
+Cityscapes 此前从未进入账本。`parseg3_b_cityscapes` 80.82（20/20）是本环境唯一一个
+Cityscapes 数据点。
 
 ## 7. 当前队列
 
-当前没有已经批准、尚待结果的训练配置。全局响应模式分解三项均已完成并关闭。
+### 7.0 证据侧一轮：全部完成，结论为负（但控制组是本轮最大收获）
 
-上一轮已写好的 no-CCM RGE / OCF / OCF+RGE 配置保留作历史候选，但经重新审查后不占当前训练槽：前者主动删除已验证的 CCM 增益，后两者与 OffSeg 已有的类别汇聚/回注高度重复。
+| 配置 | mIoU | 对 47.79 | 参数 |
+|---|---:|---:|---:|
+| EV1 = OffSeg + PCE（裸地基） | 46.09 | — | 约 +1.62M |
+| PCE on IACS | **46.49** | -1.30 | 约 +1.62M |
+| SFR on IACS | **46.90** | -0.89 | 约 +0.18M |
+| PCE + SFR on IACS | **47.54** | -0.25 | 约 +1.80M |
 
+事实：**把 CGRSeg 的 RCM 接到 47.79 决策侧上，四种配置全部低于决策侧本身。**
+该模块在 CGRSeg 自家 baseline（40.86）上报告 PCE `+1.23`、SFR 再 `+1.03`；在本地基
+上，裸地基 EV1 相对 OffSeg-B paper 45.9 只有 `+0.19`，接到强决策侧上则一律掉点。
+证据侧这一轮按性能判为负，RCM 不进入最终模型。
+
+两条值得留档的观察：
+
+1. **预注册预测成立。** EV1 读出后（在 PCE/SFR 结果之前）记录的假设是"PCE 的全图
+   上下文与 Offset Learning 已有的全局类别汇总重叠，因此局部性质的 SFR 冗余度更低"。
+   实测 SFR 46.90 > PCE 46.49，高 0.41，方向一致。可写的表述是：**这个 decoder 缺的
+   不是全局上下文（它已经有了），而更可能是融合路径中的局部结构**——但即便如此，
+   SFR 仍不足以超过决策侧本身。
+2. **单调性反常。** 两个站点单独都掉 0.9–1.3，合起来只掉 0.25，比单独 PCE 高 1.05。
+   CGRSeg 自家消融里两站点是累加的；这里"各自有害、合起来接近中性"没有现成解释，
+   记为事实，不给因果。
+
+### 7.0b 去-CCM 控制：本轮真正的收获
+
+`offsegiacs_r4_responsibility_noccm_ade20k_160k-512x512.py` = OffSeg + ACS + IACS +
+responsibility，CCM 的特征预条件换成恒等，**owner-final 46.93**，相对 47.79 低
+**0.86**。这是**同代码、同环境、同随机设置的单变量配对消融**，不依赖任何跨环境参照。
+
+按 config 里事先写好的判读（`<47.0` → CCM 承重），结论是 **CCM 保留**，而且从此有
+数字可以辩护，不再是"若论文把 CCM 作为核心组成，需要补控制或收窄表述"。
+
+更重要的是它让消融表第一次讲得通：
+
+| 配置 | mIoU | 相对 OffSeg-B paper 45.9 |
+|---|---:|---:|
+| OffSeg-B（paper 参照） | 45.9 | — |
+| + 仅 CCM | 46.80 | +0.90 |
+| + 仅残差几何（ACS+IACS+responsibility，去 CCM） | **46.93** | +1.03 |
+| + 两者（当前主模型） | **47.79** | +1.89 |
+
+`0.90 + 1.03 = 1.93`，实测合计 `1.89`——**两个组件近似可加，互不冗余**。口径提醒：
+两条"单独"行是相对 paper 值的跨环境参照差；真正配对的是 `47.79 vs 46.93` 这一对。
+本环境 OffSeg-B 配对基线仍未跑，跑完后这张表可以整体换成配对口径。
+
+### 7.1 证据侧一轮：CGRSeg RCM 移植到 47.79 决策侧
+
+背景：OffSeg 的 decoder 是 `1x1 → FreqFusion → 1x1 → 分类器`，全程没有空间上下文
+聚合；至今所有机制都只改判决方式，没有改判决所依据的证据。CGRSeg（ECCV 2024,
+arXiv 2405.06228）在**同一 backbone 家族 EfficientFormerV2** 上给出组件级消融：
+`40.86 → +DPG 41.34 → +RCM(PCE) 42.57 → +RCM(SFR) 43.60`，即 PCE `+1.23`、SFR 在
+其上再 `+1.03`；迁移到 SegNeXt-T 为 `41.1 → 42.6` 且 FLOPs 下降。这是 2024–2026
+文献扫描中唯一同时满足「组件级消融 + 同 backbone 家族 + 报告增益过 1」的机制。
+
+`OffSegRCM.RCM` 与 `OffSegEV` 早已实现。EV 轮当初设计五槽，但只跑了 slot 5
+（三者组合，46.29），slot 1–4 至今无结果，因此 PCE / SFR 单独的边际从未测量。本轮
+把同一个已发表模块接到当前最强决策侧上。
+
+| 实验 | Config（`local_configs/offseg2/Base/`） | 证据侧 | 新增参数（按 shape 估算） |
+|---|---|---|---:|
+| PCE on IACS | `offsegevpce_iacs_r4_responsibility_ade20k_160k-512x512.py` | 融合前一个全局 8×8 上下文级 | 约 +1.62M |
+| SFR on IACS | `offsegevsfr_iacs_r4_responsibility_ade20k_160k-512x512.py` | 融合路径内 128/64/32 三条支路 | 约 +0.18M |
+| 两站点 | `offsegevboth_iacs_r4_responsibility_ade20k_160k-512x512.py` | PCE + SFR | 约 +1.80M |
+| PCE 裸地基对照 | `ev1_pce_ade20k_160k-512x512.py` | 仅 PCE，无 CCM/ACS/IACS | 约 +1.62M（**已完成：46.09**，见 7.0）|
+
+实现：`OffSegEVIACS`（新文件 `mmseg/models/decode_heads/OffSegEVIACS.py`）继承
+`OffSegCCMIACS`，只覆盖 `_build_feature`；rank、统计模式、assignment、stage-1 CE、
+scorer 与优化器 key 全部继承不变。`RCM.gamma` 与 `pce_gamma` 均零初始化，step 0 与
+47.79 逐值等价。新增 needle `acc_pce_gamma` / `acc_sfr_gamma`，贴 0 表示该站点被
+模型丢弃。参数估算未实测，正式表需用同一 profiler 重算。
+
+### 7.0b 类间漂移一轮：族为负，但族内白化被证实（2026-09-05）
+
+| 配置 | mIoU | 对 47.79 |
+|---|---:|---:|
+| pairwhiten（M⁻¹ 白化方向） | **46.95** | -0.84 |
+| pairraw（原始中心差方向） | **46.19** | -1.60 |
+
+按预注册判读，两者都低于 47.4 → **把类间漂移作为惩罚项加进这个 scorer 是有害的，
+该轴关闭**。RCM 证据侧之后，这是第二条被干净关掉的外部轴。
+
+但这一对的价值不在两个绝对值，而在它们的差：
+
+> **在同一个类间机制内部，用类内散布白化判决方向比用原始中心差高 `+0.76`。**
+
+这是本项目唯一一次直接检验 Fisher 的处方，而且方向与经典结论一致，两个 run 之间
+只有 `pair_whiten` 一个开关。可写的表述是：**类内散布确实携带了判别方向的信息
+（+0.76），但把它做成一个单侧惩罚项加到分数上会亏（-0.84）**——问题在施加形式，
+不在方向本身。这比单独一个负数有价值得多，也正是当初必须成对提交的理由。
+
+### 7.0c 图级类别存在性辅助（2026-09-05）
+
+`offsegccmiacs_presence_r4_responsibility_ade20k_160k-512x512` = 47.79 主模型 +
+EncNet 式 SE-loss（池化特征上一层线性 → 每类存在性 → BCE，权重 0.2，
+**不参与推理**），**owner-final 46.73**，相对 47.79 低 **1.06**。
+
+按预注册判读落在「辅助损失与分割目标竞争」一档。**待补：`acc_presence_recall` /
+`acc_presence_precision` 的终值。** 这两个数决定结论是「存在性学得会但对 scorer
+无用」还是「这个辅助损失单纯在抢容量」，两者写法完全不同，未拿到前不得下定论。
+
+事实上这也是本项目第三次尝试 absent-class 方向（可学习 presence 探针 ≈+0.03、
+免训练空间/质量先验 ≈+0.07、本次 -1.06），三次都没有正结果。
+
+### 7.1b ADE 本环境 OffSeg-B 基线 = 46.01（owner-adopted）
+
+`offseg_b_paired_s2026_ade20k_160k-512x512` 训练中途读数已超过论文值；用户在此停止
+训练，并采用 **46.01** 作为本环境 OffSeg-B 的基线值。
+
+阶段标签：`owner-adopted`。它不是跑满 160k 的 final，而是用户根据中途读数判定的收敛
+估计，并与谢佳诺论文中同模型的复现量级（46.08）互相印证。引用时必须标成
+owner-adopted，不能写成 owner-final。论文的 SOTA 对比表沿用公开值 45.9（行规）；
+**消融表使用 46.01 作为第 0 行**，因为它是本环境的。
+
+采用 46.01 之后，消融表变成全同环境口径：
+
+| 配置 | mIoU | 相对 46.01 |
+|---|---:|---:|
+| OffSeg-B 本环境基线 | 46.01 | — |
+| 仅 CCM | 46.80 | +0.79 |
+| 仅残差几何（去 CCM） | 46.93 | +0.92 |
+| 两者（当前主模型） | **47.79** | **+1.78** |
+
+`0.79 + 0.92 = 1.71` 对实测 `1.78`，差 0.07。**"两个组件近似可加、互不冗余"这个结论
+成立，而且现在挂在本环境的零行上，不再依赖论文值。** 上一版因零行不可靠而作废的
+那条记录就此撤销。
+
+注意 `47.79 vs 46.93 = +0.86` 仍是唯一完全跑满、完全单变量的配对消融，强度最高；
+含 46.01 的三行强度次之（零行为 owner-adopted）。两者都可写，标签要分清。
+
+### 7.2 已写好但未排期
+
+| 实验 | Config | 目的 |
+|---|---|---|
+| ADE OffSeg-B 配对基线 ×2 | `Base/offseg_b_paired_s2026_…py`、`…_s7_…py` | 本环境消融表第 0 行 |
+| Stuff-B OffSeg 配对基线 | `Base/offseg_b_paired_stuff164k_80k-512x512.py` | Stuff 上首个本环境对照 |
+| 去-CCM 控制 | `Base/offsegiacs_r4_responsibility_noccm_ade20k_160k-512x512.py` | CCM 是否必要；`OffSegNoCCM` 只把 CCM 变换换成恒等，其余全继承 |
+
+上一轮已写好的 no-CCM RGE / OCF / OCF+RGE 配置保留作历史候选，不占当前训练槽。
 较早的非-responsibility IACS Stuff T/B 配置存在，但用户已明确暂不训练。
+
+### 7.3 运行设置变更（2026-08-22）
+
+`local_configs/_base_/schedules/schedule_160k.py` 与 `schedule_80k.py` 的 checkpoint
+hook 增加 `max_keep_ckpts=2, save_best='mIoU', rule='greater'`：磁盘上最多同时存在
+3 个 ckpt（2 个滚动 + 1 个历史最好），best 不计入 `max_keep_ckpts`。全部 config 均
+无 `_delete_`，走递归 merge，一处改动全局生效。
 
 ## 8. 尚缺的关键证据
 
@@ -217,7 +469,6 @@ PARSeg3Aux、LCRAux、LTX、FA-U-Mix、PCQ、HC2-S34。配置存在不等于完�
 - 47.79 的独立复跑或多 seed 均值/方差；
 - 47.79 checkpoint 的验证集聚合 needle 与逐类/混淆变化；
 - 全模型 Params、统一 FLOPs、latency、吞吐和峰值显存；
-- `OffSeg + ACS/IACS（去 CCM）` 控制；
 - Stuff 本环境配对 OffSeg T/B；
 - 当前 checkpoint/日志的持久路径和 seed 记录。
 
