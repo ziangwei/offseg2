@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-09-05
+> 最后更新：2026-09-08
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -115,6 +115,7 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegccmiacs_pairwhiten_r4_responsibility_ade20k_160k-512x512.py` | 类间漂移惩罚，方向经类内散布白化 | **46.95** | -0.84 vs responsibility | owner-final；**比未白化版高 0.76** |
 | `offsegccmiacs_pairraw_r4_responsibility_ade20k_160k-512x512.py` | 同上，方向不白化（对照） | **46.19** | -1.60 vs responsibility | owner-final；唯一差别是 `pair_whiten` |
 | `offsegccmiacs_presence_r4_responsibility_ade20k_160k-512x512.py` | EncNet 式图级类别存在性辅助 BCE | **46.73** | -1.06 vs responsibility | owner-final；辅助头不参与推理 |
+| `offsegccmiacs_dict64_r4_responsibility_ade20k_160k-512x512.py` | 逐类私有 rank-4 基 → 64 个共享原子的组合 | **46.54** | **-1.25 vs responsibility** | owner-final；共享基在 ADE 上明显有害 |
 | `offsegiacs_r4_responsibility_noccm_ade20k_160k-512x512.py` | 去掉 CCM（特征预条件换成恒等），其余全继承 | **46.93** | **-0.86 vs responsibility** | owner-final；**同环境配对的 CCM 消融，第一次量出 CCM 的贡献** |
 | `offsegevpce_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：CGRSeg PCE 全局上下文级 | **46.49** | -1.30 vs responsibility | owner-final；+1.62M 参数换来掉点 |
 | `offsegevsfr_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：CGRSeg SFR 融合路径局部恢复 | **46.90** | -0.89 vs responsibility | owner-final；+0.18M；**高于 PCE 0.41，方向与预注册假设一致** |
@@ -179,6 +180,21 @@ needle，不是验证集聚合统计。
 | OffSeg-B（论文参照） | B | 44.3 | — | paper |
 | OffSeg-B 本环境基线 | B | 43.69 | **70800/80000（88%）** | `stopped`，不可用 |
 | responsibility-IACS-r4 | B | **44.33** | 80000/80000 | owner-final |
+
+#### 共享方向字典：ADE 上 -1.25，该轴关闭（2026-09-08）
+
+| 数据集 | 私有基 | 共享字典 | 差 |
+|---|---:|---:|---:|
+| ADE20K | **47.79** | **46.54** | **-1.25** |
+| COCO-Stuff-B | 44.33 | 44.46 | +0.13 |
+
+**结论：共享基不是普遍更好的参数化，在 ADE 上代价明显。** Stuff-B 那个 +0.13 是单次
+对单次的小差值，本身从未被复现；在 ADE 出现 -1.25 之后，把它当作"每类统计量数据太少"
+的证据已经站不住。**该假设目前没有有效支持，"共享基"轴关闭。**
+
+记一条方法论教训：+0.13 曾被本账本和 THESIS_ROUTE 写成"唯一还在涨的线"，并据此排了
+两发后续实验。用户先于助手指出该证据不足（"dict 也不是确定在涨吧"）。单个小差值不得
+用来支撑叙事，也不得据以排期。
 
 #### Stuff-B：共享方向字典（2026-09-02）
 
@@ -462,6 +478,32 @@ owner-adopted，不能写成 owner-final。论文的 SOTA 对比表沿用公开�
 hook 增加 `max_keep_ckpts=2, save_best='mIoU', rule='greater'`：磁盘上最多同时存在
 3 个 ckpt（2 个滚动 + 1 个历史最好），best 不计入 `max_keep_ckpts`。全部 config 均
 无 `_delete_`，走递归 merge，一处改动全局生效。
+
+### 7.4 五槽位批次（2026-08-30 提交，`config-ready`，全部无结果）
+
+一次性提交、互不依赖，任何一发的结果都不作为另一发的前置条件。
+
+| # | Config | 卡×时长 | 单一变量 | 无论结果如何得到的表格行 |
+|---|---|---|---|---|
+| 1 | `Base/offsegccmiacs_r4_responsibility_cityscapes_160k-1024x1024.py` | 4×~30h | 数据集 → Cityscapes | 泛化表唯一空白单元格 |
+| 2 | `Base/offseg_b_paired_cityscapes_160k-1024x1024.py` | 4×~26h | 同上，头换回 `OffSegHead` | 第 1 发的本环境配对基线 |
+| 3 | `Base/offsegccmiacs_r4_responsibility_ema_ade20k_160k-512x512.py` | 4×~24h | 权重 EMA | 训练配方轴第一点 |
+| 4 | `Base/offsegccmiacsaux_r4_responsibility_ade20k_160k-512x512.py` | 4×~24h | stage-3 FCN 辅助头，推理丢弃 | 训练配方轴第二点 |
+| 5 | `Base/offsegccmiacs_support_r4_responsibility_ade20k_160k-512x512.py` | 4×~24h | `support_factor = n/(n+500)` | 支撑度收缩：涨或明确关闭 |
+
+批次设计的两条依据，都是账本里已有的事实，不是推测：
+
+- **第 2 发不是凑数。** Stuff 的"泛化失败"结论曾经是把本环境数字减去论文数字得到的，
+  已被撤回；ADE 基线也因为同样的原因从 45.9 改成本环境 46.01。Cityscapes 若只跑第 1 发，
+  唯一可比对象又是论文的 80.5，同一个错误会再犯一次。两发必须同批提交。
+- **第 3、4 发都在配方轴上，不在结构轴上。** 47.79 决策侧至今测过 8 个结构性加法
+  （evboth 47.54 / evsfr 46.90 / pairwhiten 46.95 / pre 46.73 / evpce 46.49 /
+  dict 46.54 / r2 46.69 / pairraw 46.19），8 个全部低于 47.79。rank 轴也已经三点闭合
+  （r2 46.69 / r4 47.79 / r8 46.76）。配方轴则一次都没动过，且 EMA 与深监督都不进入
+  部署模型，不影响 Params/GFLOPs 口径。
+
+风险登记：第 3、4 发任何一发为正，整张消融表必须统一重跑或统一不用；这是它们真实的
+代价，也是必须先在主模型上单变量验证、而不是默默采用的原因。
 
 ## 8. 尚缺的关键证据
 

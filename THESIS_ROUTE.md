@@ -1,25 +1,40 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-08-16
+> 最后更新：2026-08-30
 >
-> 当前结论：ADE20K 单次最佳为 **47.79 mIoU**，对应
-> `OffSegCCMIACS-r4 + non-centered responsibility`。
+> **ADE20K 主模型 47.79**（`OffSegCCMIACS-r4 + non-centered responsibility`）。
+> 本环境 OffSeg-B 基线 **46.01**（owner-adopted，与谢佳诺 46.08 互证）。SOTA 对比表
+> 沿用公开值 45.9；**消融表用 46.01**。
 >
-> 当前状态：COCO-Stuff164K responsibility-T/B 为 **42.08/44.33 mIoU**；ADE
-> competition-strength 为 **47.18**，dynamic residual filter 的整次运行峰值
-> 为 **46.63 @136k**，两条均已关闭；residual Gather–Excite 为 **47.56**，说明可读的
-> 通道激励替代有效但仍落后完整 IACS 0.23；其 MLP/Grouped-SE/Response-FFN 变体
-> 分别仅 **47.20/46.49/46.69**，说明任意 MLP/SE/FFN 不能补回 RGE 丢失的有符号
-> 协同信息。上一轮三个 response-pyramid 模型到至少 136k 均从未超过 46.3，现已停止；
-> 因日志已删除，只能判定该组合实现失败，不能把掉点单独归因给 pair 展开。当前三槽回到
-> 全局类别响应：均值增强、平均签名协同和正/负响应激励；不再使用区域池化或空间分支。
-> 其中 Signature-RGE/Bipolar-RGE 最终仅 **46.71/46.61**，均明显低于 RGE 47.56；
-> MeanBoost-IACS 进一步降至 **46.12**。这说明把四个可旋转残差坐标固定解释成均值
-> 协同通道或正负极性通道，以及在完整统计上继续学习均值权重，当前都不成立。该轮三项
-> 已全部关闭，当前没有尚待结果的训练配置。
+> **消融表（全同环境口径）**：仅 CCM 46.80（+0.79）、仅残差几何/去 CCM 46.93
+> （+0.92）、两者 47.79（+1.78）。`0.79+0.92=1.71` 对 `1.78`，**两个组件近似可加、
+> 互不冗余**。其中 `47.79 vs 46.93 = +0.86` 是唯一跑满且完全单变量的配对消融，强度最高。
 >
-> 代码分支：`main`。47.79 对应的训练 commit、seed、checkpoint/log 持久路径尚未登记；
-> 不得自动假设当前 HEAD 与原训练现场完全相同。
+> **COCO-Stuff 配对口径**：T 基线 41.66 → 42.08（**+0.42**）；B 基线 44.26 →
+> 44.33（**+0.07**），共享字典 **44.46（+0.20）**。此前"泛化失败"的说法源于拿本环境
+> 结果减论文值，已作废。
+>
+> **共享方向字典（dict）已关闭。** Stuff-B 上的 44.33→44.46 曾被写成"唯一还在涨的
+> 线"，证据强度不足以支撑该说法（owner 先于 agent 指出）；ADE 上跑出 **46.54
+> （-1.25）** 后判负。教训记在 EXPERIMENTS.md：单个 +0.13 的小样本不构成一条线。
+>
+> **决策侧的结构性加法目前 8 发全负**（evboth 47.54 / evsfr 46.90 / pairwhiten 46.95 /
+> presence 46.73 / evpce 46.49 / dict 46.54 / r2 46.69 / pairraw 46.19），rank 轴亦已
+> 三点闭合（r2 46.69 / r4 47.79 / r8 46.76）。因此下一批槽位移到**两个从未触碰的
+> 方向**：缺失的数据集单元格（Cityscapes，含本环境配对基线）与训练配方轴（EMA、
+> 深监督），两者都不进入部署模型，不影响 Params/GFLOPs 口径；另加按有效样本量收缩
+> 单图度量（support shrink），它是唯一"减少"而非"增加"模型侵略性的候选。
+>
+> **本轮关闭的轴**：类间漂移惩罚（pairwhiten 46.95 / pairraw 46.19，族为负——**但
+> 白化方向比原始方向高 +0.76，Fisher 的处方本身被证实，问题在施加形式**）；图级存在性
+> 辅助（presence 46.73，absent-class 方向第三次失败）；CGRSeg 证据侧（PCE 46.49 /
+> SFR 46.90 / 两站点 47.54 / 裸地基 46.09）；rank 下探（r2 46.69）；seed 复跑 46.82。
+> **本轮新关闭**：共享方向字典（dict on ADE 46.54）。
+>
+> **当前五个训练槽位**（EXPERIMENTS.md §7.4，均为 `config-ready`）：Cityscapes 方法、
+> Cityscapes 配对基线、EMA、stage-3 辅助头、支撑度收缩。
+>
+> 代码分支：`main`。47.79 的训练 commit / seed / checkpoint 路径仍未登记。
 
 这是本仓库关于研究目标、约束、方法、实验事实和后续工作的**唯一权威入口**。
 新会话应先读本文件，再按需查阅 [EXPERIMENTS.md](EXPERIMENTS.md) 和代码。
@@ -326,9 +341,12 @@ disabled: reliability_shrink, persistent_spectrum, classwise_mix, candidate_topk
 只改变同一个 `M_bk` 的估计。实现确有受监督的 `stage1_logits` 和 `final_logits`，但
 前者是顺序条件变量，二者不并行融合，也没有属性辅助路或后处理仲裁门。
 
-当前缺少 `OffSeg + IACS（去 CCM）` 控制，因此尚不能证明 CCM 与 IACS 的必要性或
-可加性。最诚实的说法是“architecturally stacked but statistically coupled”，而不是
-宣称它们已经被证明为不可分割的统一模块。
+**2026-08-23 更新：该控制已完成。** `OffSegIACSNoCCM`（CCM 变换换成恒等，其余全部
+继承）读出 **46.93**，相对 47.79 低 0.86；CCM-only 为 46.80。相对 OffSeg-B paper
+45.9，两个组件单独为 +0.90 / +1.03，合计实测 +1.89，近似可加。因此现在可以写：
+**两个构件各自贡献可测量的增益，且不互相冗余**；仍不能写它们是不可分割的统一模块，
+因为"可加"与"不可分"是两回事。两条"单独"行相对的是 paper 值（跨环境），真正配对的
+是 `47.79 vs 46.93`。
 
 ## 8. 47.79 最终日志如何解释
 
@@ -418,7 +436,7 @@ NMF 代码存在但没有训练结果，并且 NMF 是已发表 Hamburger 系组
 - “每类由子空间而非单向量表示”的基本思想，已有 GCR（ICCV 2023）血统；
 - 正交基、二阶矩、协方差、posterior responsibility 等数学工具；
 - GMMSeg 等以 GMM/EM responsibilities 建模类条件分布的方法；
-- CGRSeg RCM、Hamburger/NMF、EncNet 等已有模块；
+- CGRSeg 的 RCM 及其 PCE / SFR 两个放置站点、Hamburger/NMF、EncNet 等已有模块；
 - 当前 competition-strength 单标量校准。
 - depth-wise convolution、Squeeze-and-Excitation 与 Gather–Excite 等传统响应细化/通道
   重标定模块。
@@ -706,6 +724,9 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 
 - 47.79 是同协议单尺度绝对结果，达到预设目标；
 - CCM→ACS→IACS→responsibility 的同环境受控链条；
+- CCM 与残差几何各自的配对贡献（47.79 / 46.93 / 46.80），以及两者近似可加；
+- 证据侧的负结果：已发表的 RCM 上下文模块在本地基上四种配置全部掉点，
+  且该 decoder 缺的更可能是局部结构而非全局上下文；
 - 单路、无外部模型、ACS/IACS/responsibility 无新增损失；
 - 约 +0.261M module parameters（仍需最终全模型统计确认）。
 
@@ -729,11 +750,20 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 3. 对 47.79 主模型至少补多 seed 或一次独立复跑，报告均值/方差；
 4. 用同一工具统计全模型 Params、FLOPs，并测同硬件 latency/吞吐；
 5. 若 Stuff T/B 有正结果，补对应本环境 OffSeg T/B 配对基线；
-6. 当前没有 `OffSeg + ACS/IACS（去掉 CCM）` 控制，不能声称 CCM 与 IACS 的必要性
-   或可加性已经被完整证明；若论文把 CCM 作为核心组成，需要补控制或收窄表述；
+6. ~~去-CCM 控制~~ **已完成（46.93，-0.86）**；CCM 作为核心组成现在有配对证据。
+   剩余相关缺口只有本环境 OffSeg-B 配对基线，用来把消融表整体换成配对口径；
 7. 对 GCR、GMMSeg、度量学习、Gaussian/QDA 式分割、prototype/subspace
-   segmentation 做最终
-   related-work 查重，收紧原创表述；
+   segmentation 做最终 related-work 查重，收紧原创表述。**2026-08-22 文献扫描新增
+   两个必查目标**：
+   - **CenterSeg**（arXiv 2503.16963）：每类 m=8 个局部中心 + **Grassmann 流形正交
+     约束**，与本方法的逐类正交基 + GCR 血统距离最近，是当前最主要的查重风险；
+   - **SSA-Seg**（ECCV 2024, arXiv 2405.06525）：OffSeg 的直接前身、同一课题组，
+     related work 必须交代本方法与它共享的地基。
+   同时需要写一节 **Relation to PARSeg**，主动列出与师兄路线的共享地基与结构差异；
+   同实验室背景下，主动声明的相似远比未声明的相似安全。PARSeg 线的 TAM 使用冻结
+   CLIP 文本锚点（`assets/text_anchors/ade20k_clip_vitb32_desc6.pt`），其对照
+   TAM-NT 从未运行，因此"语言内容是否承重"至今无证据，且引入该成分会与约束 9
+   （不引入外部模型）冲突并使与 OffSeg/SegFormer/SegNeXt 的对比表不再同口径；
 8. 固化最终方法名和论文图，不使用历史临时名。
 
 在这些证据完成前，不应继续无边界增加新模块。新实验必须回答现有因果链上的具体
