@@ -87,15 +87,17 @@ Responsibility：用跨类竞争后的像素责任度估计该二阶几何
 | CCM + ACS-r4 | 47.24 | +0.44 |
 | CCM + IACS-r4 | 47.41 | +0.17 |
 | CCM + IACS-r4 + responsibility | **47.79** | **+0.38** |
+| 上式 + 跨图类别原型记忆（proto，2026-09-02） | **48.12** | **+0.33** |
 
-整条表均为用户报告的单次 run，没有 repeated seeds。47.79 已超过预设的 47.5
-绝对性能目标，但目前只有一次最终读数；尚未完成多 seed、
-匹配环境 OffSeg 基线、正式 Params/FLOPs/延迟测量和跨数据集验证。因此当前可以称
-“达到目标的主模型”，不能称“稳定提升”或“同参数档 SOTA”。
+整条表均为用户报告的单次 run，没有 repeated seeds。本环境同配置换 seed 的已测差为
+`47.79 -> 46.82`，所以 48.12 的 `+0.33` 目前只能写成单次读数；EXPERIMENTS.md §7.6 的
+第 3 发（proto @ seed 2026，对 46.82 配对）就是为此排的。尚未完成 Params/FLOPs/延迟
+测量与 Cityscapes 验证。当前可以称"达到目标的主模型"，不能称"稳定提升"或
+"同参数档 SOTA"。
 
-47.79 仍比本地 PARSeg3 try1 48.17 低 0.38，比师兄报告 48.84 低 1.05。当前价值是
-在结构独立、参数高效的路线中越过 47.5，不是已经超过 PARSeg；FLOPs 未测前也不能
-宣称 Pareto 更优。
+48.12 比本地 PARSeg3 try1 48.17 只低 0.05，比师兄报告 48.84 低 0.72。当前价值是在结构
+独立、参数高效的路线中越过 48，不是已经超过 PARSeg；FLOPs 未测前也不能宣称 Pareto
+更优。
 
 ## 2. 事实口径
 
@@ -754,7 +756,8 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 
 1. 读出 ADE response-conv 与 residual Gather–Excite 的最终结果；
 2. 在同一环境跑 OffSeg-B 配对基线，停止使用“取低基线”做法；
-3. 对 47.79 主模型至少补多 seed 或一次独立复跑，报告均值/方差；
+3. 对 48.12 主模型至少补多 seed 或一次独立复跑，报告均值/方差（已排入 §7.6
+   第 3 发，与已有的 seed 2026 = 46.82 构成配对差）；
 4. 用同一工具统计全模型 Params、FLOPs，并测同硬件 latency/吞吐；
 5. 若 Stuff T/B 有正结果，补对应本环境 OffSeg T/B 配对基线；
 6. ~~去-CCM 控制~~ **已完成（46.93，-0.86）**；CCM 作为核心组成现在有配对证据。
