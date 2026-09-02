@@ -120,6 +120,10 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegevpce_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：CGRSeg PCE 全局上下文级 | **46.49** | -1.30 vs responsibility | owner-final；+1.62M 参数换来掉点 |
 | `offsegevsfr_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：CGRSeg SFR 融合路径局部恢复 | **46.90** | -0.89 vs responsibility | owner-final；+0.18M；**高于 PCE 0.41，方向与预注册假设一致** |
 | `offsegevboth_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：PCE + SFR 两站点 | **47.54** | -0.25 vs responsibility | owner-final；比单独 PCE 高 1.05、比单独 SFR 高 0.64，单调性反常 |
+| `offsegccmiacs_proto_r4_responsibility_ade20k_160k-512x512.py` | 跨图类别原型记忆，按支撑度混入单图类表示 | **48.12** | **+0.33 vs responsibility** | owner-final；**本条线第一个高于 47.79 的结果，也是项目第一次越过 48** |
+| `offsegccmiacs_pairdir_r4_responsibility_ade20k_160k-512x512.py` | top-32 混淆对的成对判别方向，竞争门控 logit 转移 | **46.00** | **-1.79 vs responsibility** | owner-final；**全项目最差的一次加法**；pair 线三发（46.19/46.95/46.00）全部关闭 |
+| `offsegccmiacs_purity_r4_responsibility_ade20k_160k-512x512.py` | 统计量池化按 `P(top1)-P(top2)` 纯度加权 | **46.72** | -1.07 vs responsibility | owner-final；零参数，纯"限制"仍为负 |
+| `offsegccmiacs_hard_r4_responsibility_ade20k_160k-512x512.py` | 统计量只用该类 argmax 赢下的像素 | **46.97** | -0.82 vs responsibility | owner-final；零参数；比 purity 高 0.25，两者同向为负 |
 
 核心差值：CCM→ACS `+0.44`，ACS→IACS `+0.17`，IACS→responsibility
 `+0.38`；responsibility 相对 CCM 合计 `+0.99`。
@@ -543,10 +547,65 @@ needle 再看 mIoU**。GPU 上的实际开销提交前用 `tools/bench_head.py` 
 cityscapes_…` 修正了旧基线 batch_size=4 的 2xH100 遗留）、EMA、stage-3 辅助头。理由是
 方法还在动，现在跑 Cityscapes 等于用一个即将改变的模型去填表；等方法定稿后整批补。
 
+### 7.5 2026-09-02 一批四发：一个正结果与一条统一的负结果
+
+| Config | mIoU | vs 47.79 | 干预类型 |
+|---|---:|---:|---|
+| `…_proto_…` | **48.12** | **+0.33** | 给统计量**补充**图外信息 |
+| `…_hard_…` | 46.97 | -0.82 | **收窄**统计量的输入像素（硬切） |
+| `…_purity_…` | 46.72 | -1.07 | **收窄**统计量的输入像素（软压低） |
+| `…_pairdir_…` | 46.00 | -1.79 | 在决策侧**增加**成对容量 |
+
+**事实层面的读法（不含解释）：** 三发收窄或增加的都为负，唯一补充信息的一发为正，
+且是全项目第一次越过 48。purity 与 hard 是对同一个诊断（`reliability=0.0262`）的两种
+独立应对，方向一致地为负；两者之差 0.25 不作解释。
+
+**可写进论文的推论：** 单图每类统计量的瓶颈是**证据的量**，不是证据的**纯度**。
+`reliability = 0.0262` 此前被读作"这个统计量被不属于该类的像素污染了"，purity 与 hard
+证伪了这个读法——把那些像素压低或切掉都更差。软的跨类指派携带的信息是有用的，这也
+回过头解释了当初 `responsibility`（软后验指派）为什么胜过 `spatial`。
+
+**由此产生的一条预注册预测：** support-shrink（本批第五发，结果未报）按支撑度**下调**
+对单图统计量的信任，属于"收窄"一类，按上述读法应当为负或中性。若它为正，上面这条统一
+解释就不成立，必须重写。**这一发的结果现在比它自己的分数更重要。**
+
+**pair 线关闭。** 三发 46.19 / 46.95 / 46.00，最好的一发也没到 47。46.00 是本项目
+迄今最差的一次加法，且它是唯一一个基于"该对在冻结特征里线性可分 98-100%"这一探针
+设计的组件——**结论：二类线性可分性探针不能用来预测 150 路端到端训练的可用性**，
+在 256 维里为指定的两类拟合一个方向本来就容易。该探针今后不得再作为设计依据。
+
+**proto 的现状与限制，必须如实记录：** 单次 run，`+0.33`；本线已测得的同配置换 seed
+差为 `47.79 → 46.82`。因此下一批的第一优先级不是把 proto 铺开，而是把它的归因与复现
+先做实。见 §7.6。
+
+### 7.6 下一批五发（2026-09-02，`config-ready`）：全部围绕 proto
+
+48.12 是本项目第一个正结果，所以整批给它。分三件事：**归因**（这 +0.33 到底是什么带来
+的）、**复现**（头号数字目前压在一次 run 上）、**泛化**（它的动机预测 Stuff 上增益更大）。
+
+| # | Config | 卡×时长 | 回答的问题 |
+|---|---|---:|---|
+| 1 | `Base/offsegccmiacs_proto_r4_responsibility_stuff164k_80k-…` | 4×~13h | 低支撑数据集上增益是否更大（配对基线 44.26 已存在） |
+| 2 | `Tiny/offsegccmiacs_proto_r4_responsibility_stuff164k_80k-…` | 4×~10h | 规模越小是否越依赖记忆（配对基线 41.66 已存在） |
+| 3 | `Base/offsegccmiacs_proto_s2026_…` | 4×~25h | 同一 seed 下的配对差：46.82 → ? |
+| 4 | `Base/offsegccmiacs_protofixlam_…` | 4×~25h | 增益来自"有记忆"还是"按支撑度混合" |
+| 5 | `Base/offsegprotoplain_…` | 4×~24h | 记忆是可迁移的贡献，还是本方法的补丁 |
+
+设计上的两点说明：
+
+- **第 3 发不是"再跑一遍"。** 本线已有 seed 2026 的对照点（同配置 46.82），所以它给出
+  的是同 seed 下的配对差，而不是又一个孤立的绝对值。§8 长期挂着的"独立复跑 / 多 seed"
+  也由这一发一并补上。
+- **Stuff-L 不排。** T 与 B 都有本环境配对基线（41.66 / 44.26），L 没有；跑 L 只能跟论文
+  值 46.0 相减，正是已经撤回过一次的跨环境比较。要排 L 就得同批再占一个槽位跑 L 基线，
+  性价比不如现在这五发。
+- 第 4 发的 `proto_fixed_lambda` 必须对齐 48.12 实际学到的平均 lambda，否则不是单变量
+  对照；config 注释里给了取值的 grep 命令。
+
 ## 8. 尚缺的关键证据
 
 - 当前环境、同代码和同随机设置的 OffSeg-B 配对结果；
-- 47.79 的独立复跑或多 seed 均值/方差；
+- 47.79 与 48.12 的独立复跑或多 seed 均值/方差（48.12 的 seed 2026 配对已排入 §7.6 第 3 发）；
 - 47.79 checkpoint 的验证集聚合 needle 与逐类/混淆变化；
 - 全模型 Params、统一 FLOPs、latency、吞吐和峰值显存；
 - Stuff 本环境配对 OffSeg T/B；
