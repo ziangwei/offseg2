@@ -124,6 +124,7 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegccmiacs_pairdir_r4_responsibility_ade20k_160k-512x512.py` | top-32 混淆对的成对判别方向，竞争门控 logit 转移 | **46.00** | **-1.79 vs responsibility** | owner-final；**全项目最差的一次加法**；pair 线三发（46.19/46.95/46.00）全部关闭 |
 | `offsegccmiacs_purity_r4_responsibility_ade20k_160k-512x512.py` | 统计量池化按 `P(top1)-P(top2)` 纯度加权 | **46.72** | -1.07 vs responsibility | owner-final；零参数，纯"限制"仍为负 |
 | `offsegccmiacs_hard_r4_responsibility_ade20k_160k-512x512.py` | 统计量只用该类 argmax 赢下的像素 | **46.97** | -0.82 vs responsibility | owner-final；零参数；比 purity 高 0.25，两者同向为负 |
+| `offsegccmiacs_support_r4_responsibility_ade20k_160k-512x512.py` | 二阶矩 mix 按有效支撑度 James-Stein 收缩（低支撑退回单位阵） | **46.62** | **-1.17 vs responsibility** | owner-final；一个可学标量；本批三个"收窄"里最差的一个 |
 
 核心差值：CCM→ACS `+0.44`，ACS→IACS `+0.17`，IACS→responsibility
 `+0.38`；responsibility 相对 CCM 合计 `+0.99`。
@@ -184,6 +185,7 @@ needle，不是验证集聚合统计。
 | OffSeg-B（论文参照） | B | 44.3 | — | paper |
 | OffSeg-B 本环境基线 | B | 43.69 | **70800/80000（88%）** | `stopped`，不可用 |
 | responsibility-IACS-r4 | B | **44.33** | 80000/80000 | owner-final |
+| **proto（responsibility-IACS-r4 + 跨图类别原型记忆）** | B | **44.59** | 80000/80000 | **owner-final**；+0.26 vs 44.33，+0.33 vs 配对基线 44.26 |
 
 #### 共享方向字典：ADE 上 -1.25，该轴关闭（2026-09-08）
 
@@ -569,6 +571,18 @@ cityscapes_…` 修正了旧基线 batch_size=4 的 2xH100 遗留）、EMA、sta
 对单图统计量的信任，属于"收窄"一类，按上述读法应当为负或中性。若它为正，上面这条统一
 解释就不成立，必须重写。**这一发的结果现在比它自己的分数更重要。**
 
+**support-shrink 结果（2026-09-02 补报）：46.62，-1.17 vs 47.79。** 预注册预测成立：它为负，
+而且是三个"收窄"里最差的一个（hard -0.82 / purity -1.07 / support -1.17）。事实：按支撑度把
+单图二阶矩往单位阵收缩，比按纯度压像素、比只用 argmax 像素都更差。可以写的表述是：单图
+散布矩阵哪怕支撑很薄也不应被削弱——这与 `iacs_mix≈0.96`（训练自己就已放弃各向同性回退）
+一致。注意这一发否定的是"退回**单位阵**"，没有测过"退回**跨图类记忆**"，两者是不同的收缩目标。
+
+**proto 在 Stuff-B 上：44.59**（+0.26 vs 本线 44.33，+0.33 vs 配对基线 44.26）。跨图记忆
+在第二个数据集上仍为正，proto 现在有两个数据集的正结果。但动机里"支撑越少增益越大"的预测
+**没有兑现**：Stuff-B 的 +0.26 略小于 ADE 的 +0.33（两者均单次，schedule 不同）。可写的是
+"在两个数据集上一致为正"，不可写"在低支撑数据集上更大"。Stuff-B 的配对增益由此从 +0.07
+升到 +0.33，本论文最弱的一格得到修补；dict 的 44.46 被 proto 的 44.59 超过。
+
 **pair 线关闭。** 三发 46.19 / 46.95 / 46.00，最好的一发也没到 47。46.00 是本项目
 迄今最差的一次加法，且它是唯一一个基于"该对在冻结特征里线性可分 98-100%"这一探针
 设计的组件——**结论：二类线性可分性探针不能用来预测 150 路端到端训练的可用性**，
@@ -590,6 +604,11 @@ cityscapes_…` 修正了旧基线 batch_size=4 的 2xH100 遗留）、EMA、sta
 | 3 | `Base/offsegccmiacs_proto_s2026_…` | 4×~25h | 同一 seed 下的配对差：46.82 → ? |
 | 4 | `Base/offsegccmiacs_protofixlam_…` | 4×~25h | 增益来自"有记忆"还是"按支撑度混合" |
 | 5 | `Base/offsegprotoplain_…` | 4×~24h | 记忆是可迁移的贡献，还是本方法的补丁 |
+
+**2026-09-02 owner 裁定：** 第 1 发已完成（44.59，见 §7.5）；第 2、3、4、5 发**全部撤销**，不再
+排期——理由分别是：seed 复跑"再跑只是浪费卡，报最高值是业界常态"；protoplain "既然可以直接跟
+不加 proto 的对比，这个消融就是浪费"；固定 lambda "没意义"；Stuff-T "无意义"。今后不排复现、
+不排能由主表相减回答的归因对照、不排小规模填表。下一批只排方法侧。
 
 设计上的两点说明：
 
@@ -701,7 +720,10 @@ FreqFusion 内核或多进程 DDP 实测；没有为这三发生成性能结果�
 ## 8. 尚缺的关键证据
 
 - 当前环境、同代码和同随机设置的 OffSeg-B 配对结果；
-- 47.79 与 48.12 的独立复跑或多 seed 均值/方差（48.12 的 seed 2026 配对已排入 §7.6 第 3 发）；
+- 47.79 与 48.12 的独立复跑或多 seed 均值/方差。**目前没有任何一发在排。** §7.6 第 3 发
+  （proto @ seed 2026，与已有的 46.82 构成配对差）已随 §7.6 一并撤销，§7.7 的三发全部
+  复用 48.12 的同一 seed 1370346084，因此它们互相之间是同 seed 配对，但整条线仍然只有
+  一次 draw；
 - 47.79 checkpoint 的验证集聚合 needle 与逐类/混淆变化；
 - 全模型 Params、统一 FLOPs、latency、吞吐和峰值显存；
 - Stuff 本环境配对 OffSeg T/B；
