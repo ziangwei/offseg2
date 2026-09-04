@@ -30,6 +30,16 @@ Research integrity rules:
 Historical PARSeg/Dual/NMF configs and `PARSeg_experiment_summary.log` are retained for audit.
 They are non-canonical unless a fact is promoted with an explicit source label in the ledger.
 
+## Experiment delivery workflow
+
+The owner confirmed this workflow on 2026-09-04: after implementing and validating requested
+training experiments, make a scoped commit and push it to `origin/main` unless the owner says
+otherwise. Preserve unrelated working changes; do not force-push. Report the pushed commit,
+server synchronization commands, and one training command per slot in the familiar format:
+`PORT=29501 bash tools/dist_train.sh <config> 4`, then ports `29502` and `29503` for the next
+two slots. Keep each experiment's work directory distinct. Do not replace this delivery with
+an archive alone. Do not execute destructive server synchronization without authorization.
+
 ## Inference rules learned the hard way
 
 These were each violated once in this repository and cost a full training slot or a

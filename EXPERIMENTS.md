@@ -120,7 +120,7 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegevpce_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：CGRSeg PCE 全局上下文级 | **46.49** | -1.30 vs responsibility | owner-final；+1.62M 参数换来掉点 |
 | `offsegevsfr_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：CGRSeg SFR 融合路径局部恢复 | **46.90** | -0.89 vs responsibility | owner-final；+0.18M；**高于 PCE 0.41，方向与预注册假设一致** |
 | `offsegevboth_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：PCE + SFR 两站点 | **47.54** | -0.25 vs responsibility | owner-final；比单独 PCE 高 1.05、比单独 SFR 高 0.64，单调性反常 |
-| `offsegccmiacs_proto_r4_responsibility_ade20k_160k-512x512.py` | 跨图类别原型记忆，按支撑度混入单图类表示 | **48.12** | **+0.33 vs responsibility** | owner-final；**本条线第一个高于 47.79 的结果，也是项目第一次越过 48** |
+| `offsegccmiacs_proto_r4_responsibility_ade20k_160k-512x512.py` | 跨图类别原型记忆，按支撑度混入单图类表示 | **48.12** | **+0.33 vs responsibility** | owner-final，日志已核验：best @144k，last @160k 为 47.79；seed 1370346084；见 §7.7 |
 | `offsegccmiacs_pairdir_r4_responsibility_ade20k_160k-512x512.py` | top-32 混淆对的成对判别方向，竞争门控 logit 转移 | **46.00** | **-1.79 vs responsibility** | owner-final；**全项目最差的一次加法**；pair 线三发（46.19/46.95/46.00）全部关闭 |
 | `offsegccmiacs_purity_r4_responsibility_ade20k_160k-512x512.py` | 统计量池化按 `P(top1)-P(top2)` 纯度加权 | **46.72** | -1.07 vs responsibility | owner-final；零参数，纯"限制"仍为负 |
 | `offsegccmiacs_hard_r4_responsibility_ade20k_160k-512x512.py` | 统计量只用该类 argmax 赢下的像素 | **46.97** | -0.82 vs responsibility | owner-final；零参数；比 purity 高 0.25，两者同向为负 |
@@ -601,6 +601,102 @@ cityscapes_…` 修正了旧基线 batch_size=4 的 2xH100 遗留）、EMA、sta
   性价比不如现在这五发。
 - 第 4 发的 `proto_fixed_lambda` 必须对齐 48.12 实际学到的平均 lambda，否则不是单变量
   对照；config 注释里给了取值的 grep 命令。
+
+### 7.7 Proto 两个原始日志核验与三槽位建议（2026-09-04）
+
+来源为用户本轮提供的完整训练日志；两个 run 均完成 20 次验证。用户确认服务器实现与本地
+`OffSegProtoMem.py` 一致，ADE best checkpoint 仍存在。以下新增读数覆盖旧文中未核验的
+proto 工作点解释，但不新增任何独立复跑结果。
+
+| 项目 | ADE20K / B | COCO-Stuff164K / B |
+|---|---:|---:|
+| 日志 | `C:/Users/21138/Downloads/20260901_030721.log` | `C:/Users/21138/Downloads/20260902_023950.log` |
+| 日志 seed | 1370346084 | 2000199364 |
+| 训练进度 | 160000/160000 | 80000/80000 |
+| best mIoU | 48.12 @144000 | 44.59 @80000 |
+| last mIoU | 47.79 @160000 | 44.59 @80000 |
+| `acc_proto_lambda`，末批 | 0.9551 | 0.9127 |
+| `acc_proto_lambda`，末 10% 训练记录均值 | 0.947626（320 条） | 0.927824（160 条） |
+| `acc_proto_lambda_max`，末批 | 0.9999 | 0.9994 |
+| `acc_proto_n0`，初值 → 末批 | 200 → 192.1572 | 200 → 192.4136 |
+| `acc_proto_norm`，末批 | 15.3247 | 191.2014 |
+| `acc_iacs_mix`，末批 | 0.6378 | 0.0001 |
+| `acc_iacs_mix`，末 10% 训练记录均值 | 0.636303 | 0.000114375 |
+| `acc_acs_move`，末批 | 0.2561 | 0.0967 |
+| `acc_ccm_gain`，末批 | 0.2191 | 0.4625 |
+| `acc_acs_scale`，末批 | 0.1744 | 0.0590 |
+| `acc_iacs_anisotropy`，末批 | 0.6163 | 0.6834 |
+| `acc_iacs_effective_support`，末批 | 3620.9951 | 8527.1348 |
+
+ADE @144k 对应训练记录：`lambda=.9551, lambda_max=.9999, n0=192.2162,
+proto_norm=13.7705, iacs_mix=.6343, acs_move=.2237, ccm_gain=.1839`。
+这里的 needle 是训练日志记录，不是该 checkpoint 的验证集聚合统计。
+
+ADE 最后五次验证：`128k 47.39 → 136k 47.82 → 144k 48.12 → 152k 47.61 → 160k 47.79`。
+因此 48.12 必须明确写成完成训练后的 best-across-evals，不能写成最后一次验证值；也不能仅凭
+这条曲线把末段变化归因于记忆。与无 proto 的 best 47.79 相比，best 口径增量仍为 +0.33。
+
+ADE checkpoint（用户确认存在）：
+`work_dirs/offsegccmiacs_proto_r4_responsibility_ade20k_160k-512x512/best_mIoU_iter_144000.pth`。
+Stuff 日志报告的 best：
+`work_dirs/offsegccmiacs_proto_r4_responsibility_b_stuff164k_80k-512x512/best_mIoU_iter_80000.pth`；
+该文件当前是否仍存在未另核验。训练 commit 未登记。
+
+事实和解释边界：
+
+- 两个 run 的记忆融合在图像/类别等权平均下很强；这不是 GT 在场类或像素梯度加权均值，
+  不能推出“95% 的有效预测被替换”或“缺席类假阳性增加”。
+- Stuff 的动态 metric 系数从 4k 的 .1477 降到 16k 的 .0353、32k 的 .0034、末批 .0001，
+  末段近似退回静态 ACS；ACS 二次修正本身仍非零。44.59 不能被用来证明记忆与动态图像
+  二阶几何在两个数据集上以同一方式协同，也不能据此推断删除 IACS 重训必然等价。
+- `proto_norm` 在 Stuff 上明显增长，但日志没有当前中心范数/原型范数之比；不能单凭绝对范数
+  认定范数失配导致了 mix 下降。
+- proto 的 `support=sum_i softmax_K(stage1)_ik` 是后验总量；support-shrink 使用
+  `1/sum_i a_ik^2`，是另一统计量。`acc_proto_support` 在固定尺寸下的跨类均值必为 `N/K`，
+  ADE 109.2267、Stuff 95.8129，不是可靠性诊断。
+- 当前 `n0=softplus(raw)` 且 raw 初始约 200，两个 run 只下降约 3.8–3.9%。这说明本次
+  优化轨迹探索的相对范围很小，不证明 192 是最优值；可学习不等于已充分自适应。
+
+三槽位已由用户授权实现，状态均为 **config-ready，未提交训练、无结果**。三个 arm 分别从原 ADE proto
+配置出发；相互不叠加，已显式使用已知 seed 1370346084，沿用原 backbone 初始化、160k/
+batch16/512/每 8k 验证协议。已有 144k checkpoint 用于检查，不作为这三发的续训起点。
+
+| 优先级 | 工作名 | 相对原 proto 的单一干预 | 依据与边界 |
+|---|---|---|---|
+| 1 | `proto-route` | 融合中心后重算 pre-CCM logits，仅替换 CCM 的候选权重输入；stage-1 CE、计算 lambda 的原 logits、记忆更新均沿用 | 当前候选权重与融合中心来自两套分数；检验这个接入位置，不预先认定越早越好 |
+| 2 | `proto-offset` | `E=W+delta`；仅对 delta 建 EMA 记忆，融合成 `W+(1-lambda)delta+lambda EMA(delta)` | 原实现对整个 E 做 detached EMA；改为始终使用当前可训练 W，恢复 W 在中心表达式中的直接梯度路径；没有证据表明当前训练已因此受损，属于待检验假设 |
+| 3 | `proto-logn0` | 仅将 `n0=softplus(raw)` 改为 `n0=exp(theta)`，theta 初始化为 log(200)，沿用该标量 lr_mult=10、decay=0 | 初始融合函数相同，在相对尺度上学习融合强度；属于有效组件的优化参数化实验，不包装成新的独立机制 |
+
+`proto-offset` 的更新样本选择、momentum=.01、warmup=4000 保持不变，EMA 输入为未融合
+delta，不回写融合输出。直接梯度说明仅针对 E 中 W 的显式路径；W 还有 attention、feature 和
+stage-1 CE 等其他训练路径，不能称整个 W 的梯度被原 proto 截断。
+
+三发统一比较 best mIoU 与 48.12，并同时保留 last、末段曲线及 lambda/n0/mix 工作点。
+明显胜出者优先保留；小幅单点胜出只记候选；失败只否定对应实现。针的变化不能代替分数收益。
+本轮不排二阶矩 EMA：旧谱实验不等同于矩阵记忆，但后者的基坐标/中心漂移处理尚未明确，
+且新 Stuff 日志不支持优先扩展当前动态二阶项。也不恢复 §7.6 已撤销的四项队列。
+
+实现文件：`mmseg/models/decode_heads/OffSegProtoVariants.py`。原 `OffSegProtoMem.py` 保持不变。
+三个配置均位于 `local_configs/offseg2/Base/`：
+
+- `offsegccmiacs_protoroute_r4_responsibility_ade20k_160k-512x512.py`
+- `offsegccmiacs_protooffset_r4_responsibility_ade20k_160k-512x512.py`
+- `offsegccmiacs_protologn0_r4_responsibility_ade20k_160k-512x512.py`
+
+三者有独立 work_dir，`load_from=None, resume=False`，相对原 proto 均不增加可训练参数。
+logn0 用 `sigmoid(theta-log(support))` 稳定计算融合比例，并为 `proto_log_n0` 显式配置
+`lr_mult=10, decay_mult=0`。新增诊断：route 的 `acc_proto_route_move`；offset 的
+`acc_proto_base_norm/acc_proto_offset_norm`（原 `acc_proto_norm` 仍是完整目标中心范数）；
+logn0 的 `acc_proto_log_n0`。
+
+验证（2026-09-04）：`tools/proto_variants_sanity.py`，本地 CPU PyTorch 2.6.0+cpu，执行真实
+Offset Learning、CCM、ACS/IACS、proto 与变体代码，只桩替换特征骨干/融合及框架接口。
+已通过：注册和参数量、warmup 数值恒等及原激活边界、共享融合与原控制逐值一致、route 的
+stage-1 CE/support 不变与 context detach、offset 解析公式和 W 直接梯度/无梯度记忆、首次
+写入和 EMA/未见类保护、logn0 初值等价及相对梯度、前反向有限值、eval 冻结记忆、模型和
+优化器 state 保存恢复。`--configs-only` 使用实际 MMEngine 0.10.7，已核验完整继承配置仅有
+约定差异，seed/160k/batch4/每8k验证/best保存/独立目录均正确。未进行 GPU 全模型训练、
+FreqFusion 内核或多进程 DDP 实测；没有为这三发生成性能结果。
 
 ## 8. 尚缺的关键证据
 
