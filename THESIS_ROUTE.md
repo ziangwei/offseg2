@@ -1,9 +1,12 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-09-05
+> 最后更新：2026-09-06
 >
-> **ADE20K 主模型 48.12**（`OffSegCCMIACS-r4 + responsibility + 跨图类别原型记忆`，
-> 2026-09-02，单次 run，`+0.33` vs 47.79）。此前主线 47.79（不含记忆）。
+> **ADE20K 当前最高回报：proto-route 48.49**（2026-09-06，owner-reported，单次读数）。
+> 暂按既定 best 口径计为 `+0.37 vs 原 proto 48.12`、`+0.70 vs 无记忆 47.79`；
+> 新三发的 best/last、对应迭代和完成状态尚待日志确认。offset **47.22（-0.90）**、
+> logn0 **47.65（-0.47）**；保留 route，暂停后二者的当前实现扩展。详见 EXPERIMENTS.md §7.9。
+> 原 proto **48.12**（`OffSegCCMIACS-r4 + responsibility + 跨图类别原型记忆`）仍保留为对照。
 > **2026-09-04 原始日志核验：** ADE seed **1370346084**，完成 160k/20 次验证；
 > **48.12 是 @144k 的 best，@160k 的 last 为 47.79**。用户确认 best checkpoint 仍存在。
 > Stuff-B seed **2000199364**，完成 80k/20 次验证，best=last=44.59。
@@ -45,17 +48,17 @@
 > SFR 46.90 / 两站点 47.54 / 裸地基 46.09）；rank 下探（r2 46.69）；seed 复跑 46.82。
 > **本轮新关闭**：共享方向字典（dict on ADE 46.54）。
 >
-> **原三个槽位保留，另新增两个训练槽位。** §7.8 新增 `proto-static`（记忆 + 静态 ACS）
+> **static/local 两项尚未收到结果。** §7.8 的 `proto-static`（记忆 + 静态 ACS）
 > 和 `proto-local`（记忆用于类分数，本图中心用于残差参考点），均已 config-ready，无训练结果。
 > 二者均独立基于原 48.12 proto，不叠加原三发，不等待原三发胜出；直接完整训练，
 > 用户不安排先做 checkpoint 置零验证。五发都沿用 seed1370346084 和原 ADE 160k 配方。
 > 两发的 CPU 数值/梯度/优化器恢复与 MMEngine 配置检查通过；未做 GPU 全模型训练。
 >
-> **原三个槽位的代码已完成，尚未收到结果。** 见 EXPERIMENTS.md §7.7：`proto-route`（记忆接入
+> **原三个槽位已回报读数：route 48.49 / offset 47.22 / logn0 47.65。** §7.7 的 `proto-route`（记忆接入
 > CCM 候选权重）、`proto-offset`（当前类别基向量 + 偏移量记忆）、`proto-logn0`（相对尺度
-> 学习融合强度）。均为 **config-ready，未提交训练、无结果**，三个 arm 独立基于原 ADE proto，
-> 同用已知 seed 1370346084。CPU 数值/梯度/恢复检查与 MMEngine 配置核验已通过，未做 GPU
-> 全模型/DDP 实测。§7.6 旧五发中 Stuff-B 已完成，其余四发已撤销；下文
+> 学习融合强度）三项均记录为 **owner-reported，日志待核验**，独立基于原 ADE proto。
+> 配置同用 seed 1370346084，运行时值待日志确认。route 升为后续设计参照，
+> static/local 保持原对照；不将尚未知的收益提前组合。§7.6 旧五发中 Stuff-B 已完成，其余四发已撤销；下文
 > 仍提到旧复跑/归因排期的段落不代表当前队列。二阶矩记忆暂缓，不为收束叙事专门排负结果。
 >
 > 代码分支：`main`。47.79 的训练 commit / seed / checkpoint 路径仍未登记。
@@ -105,17 +108,20 @@ Responsibility：用跨类竞争后的像素责任度估计该二阶几何
 | CCM + IACS-r4 | 47.41 | +0.17 |
 | CCM + IACS-r4 + responsibility | **47.79** | **+0.38** |
 | 上式 + 跨图类别原型记忆（proto，2026-09-02） | **48.12** | **+0.33** |
+| proto + 融合中心重算 CCM 候选权重（route，2026-09-06） | **48.49** | **+0.37，暂按同口径** |
 
-整条表均为单次 run，proto 的原始日志已于 2026-09-04 核验，没有 repeated seeds。
+整条表均为单次读数，proto 的原始日志已于 2026-09-04 核验，没有 repeated seeds。
+route 为用户新回报，best/last 与完成状态待确认；其 stage-1 CE/support/写库 masks 未改，
+正信号仅支持此次 CCM 候选权重接入，不证明所有候选链都应换用记忆或 absent-FP 已改善。
 本环境无 proto 同配置换 seed 的已测差为 `47.79 -> 46.82`，所以 48.12 的 `+0.33`
 目前只能写成单次 best 读数；§7.6 的 proto @ seed2026 已由用户撤销，不列入当前三槽位。
 尚未完成 Params/FLOPs/延迟
 测量与 Cityscapes 验证。当前可以称"达到目标的主模型"，不能称"稳定提升"或
 "同参数档 SOTA"。
 
-48.12 比本地 PARSeg3 try1 48.17 只低 0.05，比师兄报告 48.84 低 0.72。当前价值是在结构
-独立、参数高效的路线中越过 48，不是已经超过 PARSeg；FLOPs 未测前也不能宣称 Pareto
-更优。
+新回报 48.49 在数值上比本地历史 PARSeg3 try1 48.17 高 0.32，比师兄报告 48.84 低 0.35。
+这不是同 seed 配对或跨方法稳定优越性的证明。当前进展是结构独立路线的新最高读数；
+FLOPs 未测前也不能宣称 Pareto 更优。
 
 ## 2. 事实口径
 
@@ -135,7 +141,8 @@ Responsibility：用跨类竞争后的像素责任度估计该二阶几何
 | 师兄表中的 OffSeg-B reproduction | 46.08 | 只见于旧账本，原始日志/随机设置未定位；不是已确认的当前环境配对基线 |
 | PARSeg-B | 48.84 | 师兄报告值 |
 | PARSeg3 try1 | 48.17 | 当前环境历史复现值 |
-| 当前方法 | 47.79 | 用户报告的单次最终结果 |
+| 无记忆 responsibility 对照 | 47.79 | 用户报告的单次最终结果 |
+| 当前最高回报 proto-route | 48.49 | owner-reported；best/last 与完成状态待日志确认 |
 
 不得把 `47.79 - 45.9 = 1.89` 写成严格的同环境增益。可以写“相对论文参考绝对值
 高 1.89”，受控方法消融应从 CCM 46.80、ACS 47.24、IACS 47.41 这条同环境链条
@@ -146,6 +153,7 @@ Responsibility：用跨类竞争后的像素责任度估计该二阶几何
 
 - `paper`：论文公开结果；
 - `owner-final`：用户明确报告的最终读数；
+- `owner-reported`：用户回报数值，但阶段或 best/last 尚未确认；
 - `interim/peak`：中间或峰值，不得冒充最终结果；
 - `probe`：oracle/只读探针，不是可训练模型成绩；
 - `config-ready`：代码已就绪但结果未知，不得写成“正在跑”或“已验证”；
@@ -769,6 +777,10 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 - 整体模型零额外 loss。
 
 ## 14. 完成论文证据链前必须补齐
+
+2026-09-06 当前新增缺口：route 48.49、offset 47.22、logn0 47.65 的日志、best/last、
+实际完成状态、seed 与训练 SHA；见 EXPERIMENTS.md §7.9。先核验 route，并等待 static/local
+回报；以下旧排期不恢复用户已撤销的复跑/归因实验。
 
 优先级从高到低：
 

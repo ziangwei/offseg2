@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-09-08
+> 最后更新：2026-09-06
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -10,6 +10,7 @@
 
 - `paper`：公开论文结果；
 - `owner-final`：用户明确报告的最终读数；
+- `owner-reported`：用户报告读数，但尚未确认 best/last、对应迭代或训练完成状态；
 - `interim/peak`：中间或峰值；
 - `probe`：oracle/只读探针，不是模型成绩；
 - `config-ready`：代码已就绪但没有结果；
@@ -77,7 +78,7 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 
 ## 4. 当前 CCM→ACS→IACS→Responsibility 主线
 
-所有行均为 ADE20K `owner-final`、单次 run。
+除单独标注外，各行均为 ADE20K `owner-final`、单次 run；新回报未核验行使用 `owner-reported`。
 
 | Config（`local_configs/offseg2/Base/`） | 单一变化 | mIoU | 对正确控制组 | 结论 |
 |---|---|---:|---:|---|
@@ -95,7 +96,7 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegccmiacs_r4_centered_responsibility_ade20k_160k-512x512.py` | centered + responsibility | 47.13 | +0.22 vs centered | 竞争责任度条件正信号 |
 | `offsegccmiacs_r4_centered_responsibility_reliable_ade20k_160k-512x512.py` | 再加 reliability shrink | 46.67 | -0.46 vs centered+resp | posterior 尖锐度不是可靠性 |
 | `offsegccmiacs_r4_spectrum_ade20k_160k-512x512.py` | persistent rank spectrum | 47.32 | -0.09 vs IACS-r4 | 静态方向谱无增益 |
-| `offsegccmiacs_r4_responsibility_ade20k_160k-512x512.py` | non-centered responsibility | **47.79** | **+0.38 vs IACS-r4** | **当前主模型** |
+| `offsegccmiacs_r4_responsibility_ade20k_160k-512x512.py` | non-centered responsibility | **47.79** | **+0.38 vs IACS-r4** | **无记忆主线对照** |
 | `offsegccmiacs_r4_responsibility_spectrum_ade20k_160k-512x512.py` | responsibility + spectrum | 47.09 | -0.70 vs responsibility | 明显负交互 |
 | `offsegccmiacs_r4_responsibility_competition_ade20k_160k-512x512.py` | 学习责任竞争强度 | 47.18 | -0.61 vs responsibility | 标量校准失败；保留原始 responsibility |
 | `offsegccmdrf_r4_ade20k_160k-512x512.py` | 单个动态残差滤波器；run peak @136k | **46.63** | -0.61 vs ACS-r4；-1.16 vs responsibility | owner-confirmed run peak；把四通道响应压成一个均值滤波器有害 |
@@ -121,6 +122,9 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegevsfr_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：CGRSeg SFR 融合路径局部恢复 | **46.90** | -0.89 vs responsibility | owner-final；+0.18M；**高于 PCE 0.41，方向与预注册假设一致** |
 | `offsegevboth_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：PCE + SFR 两站点 | **47.54** | -0.25 vs responsibility | owner-final；比单独 PCE 高 1.05、比单独 SFR 高 0.64，单调性反常 |
 | `offsegccmiacs_proto_r4_responsibility_ade20k_160k-512x512.py` | 跨图类别原型记忆，按支撑度混入单图类表示 | **48.12** | **+0.33 vs responsibility** | owner-final，日志已核验：best @144k，last @160k 为 47.79；seed 1370346084；见 §7.7 |
+| `offsegccmiacs_protoroute_r4_responsibility_ade20k_160k-512x512.py` | 融合中心重算 CCM 候选权重 | **48.49** | **+0.37 vs proto，暂按同口径** | owner-reported，当前最高回报；best/last、完成状态待核验，见 §7.9 |
+| `offsegccmiacs_protooffset_r4_responsibility_ade20k_160k-512x512.py` | 仅记忆偏移量，保留当前 W | 47.22 | -0.90 vs proto，暂按同口径 | owner-reported，暂停当前实现扩展；见 §7.9 |
+| `offsegccmiacs_protologn0_r4_responsibility_ade20k_160k-512x512.py` | n0 改为 log 参数化 | 47.65 | -0.47 vs proto，暂按同口径 | owner-reported，保留原 softplus；见 §7.9 |
 | `offsegccmiacs_pairdir_r4_responsibility_ade20k_160k-512x512.py` | top-32 混淆对的成对判别方向，竞争门控 logit 转移 | **46.00** | **-1.79 vs responsibility** | owner-final；**全项目最差的一次加法**；pair 线三发（46.19/46.95/46.00）全部关闭 |
 | `offsegccmiacs_purity_r4_responsibility_ade20k_160k-512x512.py` | 统计量池化按 `P(top1)-P(top2)` 纯度加权 | **46.72** | -1.07 vs responsibility | owner-final；零参数，纯"限制"仍为负 |
 | `offsegccmiacs_hard_r4_responsibility_ade20k_160k-512x512.py` | 统计量只用该类 argmax 赢下的像素 | **46.97** | -0.82 vs responsibility | owner-final；零参数；比 purity 高 0.25，两者同向为负 |
@@ -676,7 +680,7 @@ Stuff 日志报告的 best：
 - 当前 `n0=softplus(raw)` 且 raw 初始约 200，两个 run 只下降约 3.8–3.9%。这说明本次
   优化轨迹探索的相对范围很小，不证明 192 是最优值；可学习不等于已充分自适应。
 
-三槽位已由用户授权实现，状态均为 **config-ready，未提交训练、无结果**。三个 arm 分别从原 ADE proto
+三槽位于 2026-09-04 实现并交付；**2026-09-06 用户已回报三项读数，见 §7.9**。三个 arm 分别从原 ADE proto
 配置出发；相互不叠加，已显式使用已知 seed 1370346084，沿用原 backbone 初始化、160k/
 batch16/512/每 8k 验证协议。已有 144k checkpoint 用于检查，不作为这三发的续训起点。
 
@@ -719,8 +723,8 @@ FreqFusion 内核或多进程 DDP 实测；没有为这三发生成性能结果�
 
 ### 7.8 新增两槽：记忆与残差几何的连接（2026-09-05）
 
-用户新增两个完整训练槽位，授权设计、实现并 push。§7.7 的 route/offset/logn0 三发继续保留，
-目前未收到结果；本批不等待它们胜出，也不叠加其中任何一个改动。用户已拒绝先做 checkpoint
+用户新增两个完整训练槽位，授权设计、实现并 push。设计时 §7.7 的 route/offset/logn0 三发
+尚未收到结果（2026-09-06 回报见 §7.9）；本批不叠加其中任何一个改动。用户已拒绝先做 checkpoint
 置零验证，因此直接安排两个独立的 ADE 160k 训练。五发都以已测原 proto 48.12 为主要参照。
 
 重新审计后的依据：CCM、类残差几何和跨图中心记忆各有已登记的正向单次结果；增加成对
@@ -801,7 +805,42 @@ static 若以更简单架构接近或超过原 proto，可成为简化候选；�
 `--configs-only` 已通过完整继承差异核验及五个 work_dir 互异检查。未跑 GPU backbone、
 FreqFusion 内核或多进程 DDP 训练；两头均直接继承原版跨卡记忆更新代码，未改通信行为。
 
+### 7.9 Proto 三变体用户回报：route 48.49 / offset 47.22 / logn0 47.65（2026-09-06）
+
+来源：用户本会话直接回报 `protoroute 48.49；protooffset 47.22；logn0 47.65`。
+阶段标记为 **owner-reported，单次读数**；尚未提供本批日志、best/last 区分、对应迭代、
+实际验证次数及完成状态。下表先按既定 best checkpoint 报告惯例与原 proto best48.12 比较，
+这些差值是暂定同口径差，不将三项读数登记为 @160k 的 last 或已核验完整训练峰值。
+
+| Config（`local_configs/offseg2/Base/`） | mIoU | vs 原 proto 48.12 | 当前决策 |
+|---|---:|---:|---|
+| `offsegccmiacs_protoroute_r4_responsibility_ade20k_160k-512x512.py` | **48.49** | **+0.37** | 当前最高用户报告读数；后续方法设计优先基于 route |
+| `offsegccmiacs_protooffset_r4_responsibility_ade20k_160k-512x512.py` | 47.22 | -0.90 | 暂停本 offset 实现的扩展，不与赢家组合 |
+| `offsegccmiacs_protologn0_r4_responsibility_ade20k_160k-512x512.py` | 47.65 | -0.47 | 暂停本 log 参数化实现的扩展，保留原 softplus |
+
+对应交付实现 commit：`e1d1ea4f266ee0166ef34bf3209eb99a1cef8d1c`；实际训练 checkout SHA
+尚未提供。配置协议为 ADE20K / B（EfficientFormerV2-S2）/ 512 / 160k / 总 batch16 /
+每8k验证 / seed1370346084 / backbone 预训练初始化。以上为已核对配置值，运行时是否有
+覆盖尚待日志确认。三个 work_dir 均为 `work_dirs/<对应 config 去掉 .py>`；实际 checkpoint
+文件名和日志路径未知。`route_move`、lambda、n0、mix 及末段验证曲线均尚未收到。
+
+解释与后续：
+
+- route 原实现已经将融合中心用于 CCM 上下文向量和最终打分；新改动仅重算 CCM 的候选
+  权重输入。48.49 支持保留这个接入位置；不能升级成“记忆越早介入越好”，因为 stage-1 CE、
+  支撑度和写库判定仍沿用原 masks，也没有测得 absent-FP 的变化。
+- offset 的负差不支持继续以“去掉旧 W 必然更好”为动机扩展；但该实现同时改变记忆目标和
+  W 的直接梯度，不能反推历史 W 必然有益，亦不能否定所有处理记忆滞后的方案。
+- logn0 的负差不支持当前参数化；没有日志不能判定 n0 是否移动过快、过大或完全未动，
+  也不能据此证明 200/192 是最优阈值。助手此前更看好 offset、下调 route 的判断由结果修正。
+- static/local 保持各自相对原 48.12 的独立对照，尚未收到结果，不中途叠加 route。若其中
+  一个胜出，才考虑与 route 组合，并以 route 48.49 作为新组合的直接控制；增益不预先相加。
+- 下一步先收取 route 完整日志，核实 best/last、迭代和工作点；不新增 checkpoint 置零验证、
+  seed 复跑或已撤销的归因队列。本次只更新结果与路线，不新增训练配置。
+
 ## 8. 尚缺的关键证据
+
+- §7.9 三项回报的原始日志、best/last、完成状态、实际 seed/训练 SHA 与 checkpoint 路径；
 
 - 当前环境、同代码和同随机设置的 OffSeg-B 配对结果；
 - 47.79 与 48.12 的独立复跑或多 seed 均值/方差。**目前没有任何一发在排。** §7.6 第 3 发
