@@ -717,6 +717,90 @@ stage-1 CE/support 不变与 context detach、offset 解析公式和 W 直接梯
 约定差异，seed/160k/batch4/每8k验证/best保存/独立目录均正确。未进行 GPU 全模型训练、
 FreqFusion 内核或多进程 DDP 实测；没有为这三发生成性能结果。
 
+### 7.8 新增两槽：记忆与残差几何的连接（2026-09-05）
+
+用户新增两个完整训练槽位，授权设计、实现并 push。§7.7 的 route/offset/logn0 三发继续保留，
+目前未收到结果；本批不等待它们胜出，也不叠加其中任何一个改动。用户已拒绝先做 checkpoint
+置零验证，因此直接安排两个独立的 ADE 160k 训练。五发都以已测原 proto 48.12 为主要参照。
+
+重新审计后的依据：CCM、类残差几何和跨图中心记忆各有已登记的正向单次结果；增加成对
+容量、筛选统计像素、共享基及响应通道增容均没有给出继续沿对应实现扩展的依据。最新 proto
+日志提示记忆与动态几何可能存在相互影响，但没有证明谁替代谁。新增两发分别测试一个
+更简洁的架构和一个不同的中心使用方式，不把未知结果的模块提前组合。
+
+| 槽位 | 工作名 / 类 | 相对原 48.12 的唯一结构干预 | 状态 |
+|---|---|---|---|
+| 4 | `proto-static` / `OffSegCCMACSProto` | 保留原中心记忆与 CCM，将 IACS 换成真正的静态 ACS | config-ready，CPU/配置检查通过，无训练结果 |
+| 5 | `proto-local` / `OffSegCCMIACSProtoLocal` | 仅让残差计算以融合前的本图中心为参考点 | config-ready，CPU/配置检查通过，无训练结果 |
+
+**槽位 4：保留记忆，直接简化动态度量。** 设融合中心为 `E_blend`，投影残差为
+`q=U^T(fhat-E_blend)`。用 `correction=0.5*s*||q||^2` 替换
+`0.5*s*q^T[(1-m)I+m*Sbar]q`。实际使用 `AffineClassSubspace`，删除动态统计和 mix
+参数；不是仅把 mix 初值改小。原 proto 的写入/读取、n0 参数化、EMA、warmup、CCM
+候选权重与中心、stage-1 CE 和 final CE 都沿用。删除 IACS 后，其 post-CCM responsibility
+矩阵池化也随之删除；proto 自身的 stage-1 posterior support 仍保留。
+
+选择理由：原 proto 的 ADE mix 末批 .6378、Stuff 末批 .0001 提供了实际模型的简化线索。
+这不是“mix 掉三分之一，所以性能贡献掉三分之一”，也不是“Stuff 证明 ADE 可删”；完整
+重训才能判断本架构是否可用。当前 rank-4 的 `Sbar` 为 PSD 且迹为4，所以同一参数/残差
+下，动态能量与单位度量能量的相对差上界为 `3*m`（非零残差）。Stuff 末批 `m≈.0001`
+确实使该二次项接近静态；这个上界不保证预测标签不变，也不说明从第一步删掉 IACS 的
+训练轨迹等价。静态 ACS 仍保留可训练的逐类 rank-4 基和尺度、动态图像中心
+与跨图记忆；只比原 proto 少一个可训练标量。动态统计计算被删除，但实际速度和显存收益
+尚未实测，不宣称大幅加速。该臂从第一步起使用静态 ACS，不与原 IACS warmup 期逐值相等。
+
+**槽位 5：类别评分用记忆中心，图内残差保留本图参考点。** 原 proto 把同一个 `E_blend`
+同时用于 CCM 上下文、线性类分数、残差投影和非中心二阶统计。新模型仍用它生成 CCM
+上下文和 `raw_score=fhat^T E_blend`，只将残差改成 `q_local=U^T(fhat-E_image)`。
+`E_image` 是 Offset Learning 的图像自适应类别表示，不是 GT 均值或样本均值。IACS 的
+post-CCM responsibility、non-centered 矩阵、trace normalization、mix 和二次评分均保留。
+因此仅残差参考点保持图内；CCM 后的特征与池化权重仍会受到记忆中心影响。
+
+为什么值得试：对于同一组特征、基和池化权重，令 `d=U^T(E_blend-E_image)`，则
+
+```text
+q_blend = q_local - d
+S_blend = S_local - mu_local*d^T - d*mu_local^T + d*d^T
+```
+
+因此把记忆用于类别表示，也会改变二阶统计的参考点。这一恒等式是解析事实；这些变化
+是否有害、是否解释 mix 下降都仍是假设。local 通过单一参考点选择保留图内残差结构，
+不增加参数、记忆槽、损失、迭代或第二分类分支。
+
+与旧实验的区别：centered 臂减掉整个残差均值，新臂仍保留 `E[q_local*q_local^T]`；
+offset 臂改变记忆的对象和所有融合中心，新臂完全沿用原 bank 及融合；route 臂更改 CCM
+候选权重，新臂沿用原候选权重。参考点变化同时恢复残差对 `E_image` 的显式梯度路径，
+不能将潜在收益只归因于平移项。新增 anchor shift/relative 两个针记录融合位移及相对
+本图中心范数的大小；它们不是 GT 在场类统计，也不能单独证明误差原因。
+
+没有选择的备选：support-weighted 写库会把图像中心由等权改为后验总量加权，但后验
+总量不是已验证的可靠度，并可能偏向大面积外观；proto+RGE 主要是在组合旧组件；跨图
+二阶矩 EMA 仍需处理训练中基和中心变化。本批优先回答当前记忆与残差几何的直接连接问题。
+
+实现：`mmseg/models/decode_heads/OffSegProtoGeometry.py`；配置位于 `local_configs/offseg2/Base/`：
+
+- `offsegccmacs_proto_r4_ade20k_160k-512x512.py`
+- `offsegccmiacs_protolocal_r4_responsibility_ade20k_160k-512x512.py`
+
+统一原 proto 配方：EfficientFormerV2-S2，512 crop，4 卡 × 每卡 batch4，160k，每 8k
+验证，seed 1370346084，n0 初值200/原 softplus 参数化，EMA .01，warmup4000。
+均 `load_from=None, resume=False`，沿用原骨干预训练初始化，独立 work_dir；对应端口
+29504/29505。静态臂只删除动态度量标量，不改变其余共同参数初始化与后续 RNG 状态。
+
+判读：统一记录 best-across-20-evals、last 和末段曲线，对照原 proto best48.12/last47.79。
+static 若以更简单架构接近或超过原 proto，可成为简化候选；小幅单次差值不构成等价或
+稳定提升的证明。local 若超过原 proto，可支持该参考点选择继续保留；mix 回升本身不算
+成功。如果两者都输，只关闭本次两个实现，不用二者之间的差证明某个机制正确。
+
+验证（2026-09-05）：`tools/proto_geometry_sanity.py` 在 CPU PyTorch 2.6.0+cpu 下通过。
+检查共同参数/RNG 一致、静态版与同权重零 mix 的数值等价且不调用动态统计、local warmup
+恒等和原激活边界、CCM 输入/输出与分类分数不变、残差公式及参考点解析梯度、两项 CE、
+原型首次写入/EMA/未见类保护、有限前后向、eval 不写 bank、模型和优化器保存恢复后下一次
+完整训练更新逐值相同。另在实际 150 类/256 通道的小空间输入上通过两头前后向，全部参数
+有有限梯度；这是 head 数值检查，不是全模型性能测量。真实 MMEngine 0.10.7 的
+`--configs-only` 已通过完整继承差异核验及五个 work_dir 互异检查。未跑 GPU backbone、
+FreqFusion 内核或多进程 DDP 训练；两头均直接继承原版跨卡记忆更新代码，未改通信行为。
+
 ## 8. 尚缺的关键证据
 
 - 当前环境、同代码和同随机设置的 OffSeg-B 配对结果；
