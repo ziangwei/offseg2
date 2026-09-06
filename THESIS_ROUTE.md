@@ -48,18 +48,23 @@
 > SFR 46.90 / 两站点 47.54 / 裸地基 46.09）；rank 下探（r2 46.69）；seed 复跑 46.82。
 > **本轮新关闭**：共享方向字典（dict on ADE 46.54）。
 >
-> **static/local 两项尚未收到结果。** §7.8 的 `proto-static`（记忆 + 静态 ACS）
-> 和 `proto-local`（记忆用于类分数，本图中心用于残差参考点），均已 config-ready，无训练结果。
-> 二者均独立基于原 48.12 proto，不叠加原三发，不等待原三发胜出；直接完整训练，
-> 用户不安排先做 checkpoint 置零验证。五发都沿用 seed1370346084 和原 ADE 160k 配方。
-> 两发的 CPU 数值/梯度/优化器恢复与 MMEngine 配置检查通过；未做 GPU 全模型训练。
+> **static/local 已回报：47.71 / 47.25。** 相对各自原 proto 48.12 对照为 **-0.41 / -0.87**。
+> 二者均为 owner-reported，best/last 与完成状态待日志确认，详见 EXPERIMENTS.md §7.10。
+> 本轮五变体只有 route 高于原 proto，保留 route 的完整 IACS 与融合中心残差参考点。
+> 不将 static/local 并入 route。配置统一 seed1370346084 与 ADE 160k，实际运行值待日志核验。
+> P 在训练时通过 EMA 写入，推理固定；E、λ、Ē 仍随每张输入图前向计算，不做测试时更新。
 >
 > **原三个槽位已回报读数：route 48.49 / offset 47.22 / logn0 47.65。** §7.7 的 `proto-route`（记忆接入
 > CCM 候选权重）、`proto-offset`（当前类别基向量 + 偏移量记忆）、`proto-logn0`（相对尺度
 > 学习融合强度）三项均记录为 **owner-reported，日志待核验**，独立基于原 ADE proto。
 > 配置同用 seed 1370346084，运行时值待日志确认。route 升为后续设计参照，
-> static/local 保持原对照；不将尚未知的收益提前组合。§7.6 旧五发中 Stuff-B 已完成，其余四发已撤销；下文
+> static/local 低于各自原对照，暂不组合。§7.6 旧五发中 Stuff-B 已完成，其余四发已撤销；下文
 > 仍提到旧复跑/归因排期的段落不代表当前队列。二阶矩记忆暂缓，不为收束叙事专门排负结果。
+>
+> **当前两槽（2026-09-06，config-ready）**：`route-write` 和 `route-CE`，均独立对照
+> route48.49。前者只将写库的图像中心等权平均改为 `n/(n+n0)` 有界加权；后者只把已有
+> stage-1 CE 移到融合后的 pre-CCM 路由分数，support/写库条件仍使用原 L0。
+> 保留完整 IACS、融合残差锚点、两项原 CE 与原训练预算。无训练结果，详见 EXPERIMENTS.md §7.11。
 >
 > 代码分支：`main`。47.79 的训练 commit / seed / checkpoint 路径仍未登记。
 
@@ -113,6 +118,11 @@ Responsibility：用跨类竞争后的像素责任度估计该二阶几何
 整条表均为单次读数，proto 的原始日志已于 2026-09-04 核验，没有 repeated seeds。
 route 为用户新回报，best/last 与完成状态待确认；其 stage-1 CE/support/写库 masks 未改，
 正信号仅支持此次 CCM 候选权重接入，不证明所有候选链都应换用记忆或 absent-FP 已改善。
+后续 static 47.71 / local 47.25 均低于原 proto 48.12，目前不支持直接简化动态度量或
+更换为图内残差参考点；单次负差只关闭这两个实现，不证明任何模块普遍必要。
+当前两项后续只检验同一记忆链上的写库权重和路由监督：route-write 不修改 IACS 的像素
+池化，route-CE 不修改支撑度及写库资格。前者可能偏向大面积外观，后者可能削弱未融合
+中心的直接监督；两者各自从相同骨干初始化完整训练，结果不得相加预估组合收益。
 本环境无 proto 同配置换 seed 的已测差为 `47.79 -> 46.82`，所以 48.12 的 `+0.33`
 目前只能写成单次 best 读数；§7.6 的 proto @ seed2026 已由用户撤销，不列入当前三槽位。
 尚未完成 Params/FLOPs/延迟
@@ -779,8 +789,8 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 ## 14. 完成论文证据链前必须补齐
 
 2026-09-06 当前新增缺口：route 48.49、offset 47.22、logn0 47.65 的日志、best/last、
-实际完成状态、seed 与训练 SHA；见 EXPERIMENTS.md §7.9。先核验 route，并等待 static/local
-回报；以下旧排期不恢复用户已撤销的复跑/归因实验。
+实际完成状态、seed 与训练 SHA；static 47.71 与 local 47.25 同样待核验，见 EXPERIMENTS.md
+§7.9–7.10。先核验 route；以下旧排期不恢复用户已撤销的复跑/归因实验。
 
 优先级从高到低：
 

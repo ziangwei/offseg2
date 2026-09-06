@@ -734,8 +734,8 @@ FreqFusion 内核或多进程 DDP 实测；没有为这三发生成性能结果�
 
 | 槽位 | 工作名 / 类 | 相对原 48.12 的唯一结构干预 | 状态 |
 |---|---|---|---|
-| 4 | `proto-static` / `OffSegCCMACSProto` | 保留原中心记忆与 CCM，将 IACS 换成真正的静态 ACS | config-ready，CPU/配置检查通过，无训练结果 |
-| 5 | `proto-local` / `OffSegCCMIACSProtoLocal` | 仅让残差计算以融合前的本图中心为参考点 | config-ready，CPU/配置检查通过，无训练结果 |
+| 4 | `proto-static` / `OffSegCCMACSProto` | 保留原中心记忆与 CCM，将 IACS 换成真正的静态 ACS | owner-reported 47.71，-0.41 vs 48.12；见 §7.10 |
+| 5 | `proto-local` / `OffSegCCMIACSProtoLocal` | 仅让残差计算以融合前的本图中心为参考点 | owner-reported 47.25，-0.87 vs 48.12；见 §7.10 |
 
 **槽位 4：保留记忆，直接简化动态度量。** 设融合中心为 `E_blend`，投影残差为
 `q=U^T(fhat-E_blend)`。用 `correction=0.5*s*||q||^2` 替换
@@ -833,12 +833,110 @@ FreqFusion 内核或多进程 DDP 训练；两头均直接继承原版跨卡记�
   W 的直接梯度，不能反推历史 W 必然有益，亦不能否定所有处理记忆滞后的方案。
 - logn0 的负差不支持当前参数化；没有日志不能判定 n0 是否移动过快、过大或完全未动，
   也不能据此证明 200/192 是最优阈值。助手此前更看好 offset、下调 route 的判断由结果修正。
-- static/local 保持各自相对原 48.12 的独立对照，尚未收到结果，不中途叠加 route。若其中
-  一个胜出，才考虑与 route 组合，并以 route 48.49 作为新组合的直接控制；增益不预先相加。
+- static/local 的后续回报见 §7.10，两项均低于各自直接对照 48.12，不与 route 组合。
 - 下一步先收取 route 完整日志，核实 best/last、迭代和工作点；不新增 checkpoint 置零验证、
   seed 复跑或已撤销的归因队列。本次只更新结果与路线，不新增训练配置。
 
+### 7.10 Proto-static 47.71 / Proto-local 47.25 与推理语义（2026-09-06）
+
+用户回报 `ccmacs proto 47.71；protolocal 47.25`，分别对应下列已交付配置。
+阶段：**owner-reported，单次读数**；未提供日志、best/last、对应迭代或完成状态。
+按既定 best 报告惯例暂与原 proto best48.12 比较，不将读数自动标为 @160k last。
+
+| Config（`local_configs/offseg2/Base/`） | mIoU | vs 原 proto 48.12 | 决策 |
+|---|---:|---:|---|
+| `offsegccmacs_proto_r4_ade20k_160k-512x512.py` | 47.71 | -0.41 | 当前简化未保住对照成绩，保留完整 IACS |
+| `offsegccmiacs_protolocal_r4_responsibility_ade20k_160k-512x512.py` | 47.25 | -0.87 | 保留原融合中心作为残差参考点 |
+
+交付代码 commit：`a63956c09372ca160c97c52d846c988bc0aaaeb2`。配置为 ADE20K / B /
+EfficientFormerV2-S2 / 512 / 160k / 总 batch16 / 每8k验证 / seed1370346084。
+实际训练 SHA、seed 覆盖与运行协议待日志核验；work_dir 为各 config 去掉 `.py` 后加
+`work_dirs/` 前缀，具体 checkpoint 和日志路径尚未收到。末批 mix、lambda、n0、
+local 的 anchor shift/relative 及 best/last 曲线均未知。
+
+本轮五变体只有 route 的报告值高于原 proto。后续保留 route 48.49，不把 static/local
+并入它。static 的结果没有支持“记忆使 IACS 可直接删除且保持成绩”，但单次 -0.41
+不能证明动态二阶项普遍不可缺少。local 同时改变残差原点与直接梯度，-0.87 不能
+单独归因于哪一个变化，也不能从两个失败臂的差推出机制结论。
+
+推理语义核对：`OffSegProtoMem._blend_prototypes` 仅在 `self.training` 为真时调用
+`_update_prototypes`。P 是训练阶段对符合写库条件的完整图像类别中心 E 做 EMA 得到的
+buffer，常规更新率 .01，首次直接初始化。推理时 P 和网络参数固定；OffSeg 仍为每张
+输入图计算 E=W+ΔW(image) 与 F，原始 L⁰ 决定支撑度 n，故 λ 与融合中心 Ē 也随图变化。
+这些是前向计算，不是测试时优化或在线写库。EMA 是记忆维护方法，完整 proto 还包括
+按支撑度读取/融合及接入评分；route 进一步改变 CCM 候选权重的计算位置。
+
+### 7.11 Route 后续两槽：写库权重与路由监督（2026-09-06，config-ready）
+
+用户新增两个完整训练槽位。本批两项都独立基于当前最高回报 **Proto-route 48.49**，
+不将两项互相叠加，也不组合已低于各自对照的 offset/logn0/static/local。
+48.49 仍是 owner-reported，缺少完整运行日志；以下均为待检验设计，不是新增结果。
+
+| Config（`local_configs/offseg2/Base/`） | 唯一干预 | 正确对照 | 状态 |
+|---|---|---|---|
+| `offsegccmiacs_protoroutewrite_r4_responsibility_ade20k_160k-512x512.py` | EMA 的批内图像中心由等权改为有界支撑度加权 | route 48.49，暂按 best 口径 | config-ready，无结果 |
+| `offsegccmiacs_protoroutece_r4_responsibility_ade20k_160k-512x512.py` | 现有 stage-1 CE 改为监督融合后的 pre-CCM 路由分数 | route 48.49，暂按 best 口径 | config-ready，无结果 |
+
+**Route-write：读取已经按本图支撑度区分，写入仍按图像等权。** 当前代码对原始 stage-1
+后验总量 `n_bk > 1` 的图像类别对等权平均 E，再以更新率 .01 写入 P。新臂沿用同一个
+资格条件，只改跨图像平均的权重：
+
+```text
+w_bk = 1[n_bk > 1] * n_bk / (n_bk + stopgrad(n0))
+E_write_k = sum_b(w_bk * stopgrad(E_bk)) / sum_b(w_bk)
+P_k <- .99 P_k + .01 E_write_k
+```
+
+首次观察直接初始化为加权中心；没有合格观察的类别不写入。跨卡分别 all-reduce 加权
+分子和权重总量，再相除，不能对每卡局部归一化中心等权平均。仍存完整 E，读取 lambda、
+EMA 更新率、warmup、CCM、IACS 像素责任度与两项 CE 均不改。复用原 n0 的当前值并
+stop-gradient，没有新增参数。用 `n/(n+n0)` 而非原始 n，使单张大面积图的权重饱和于 1。
+
+动机是检验“写库也区分图像证据量”是否有益，不把 n 当作已校准可靠度，不宣称旧库已被
+缺席类污染。§7.8 曾因这一风险而暂缓该候选；现在 route 胜出而 static/local 都低于对照，
+本批优先保持成功的使用位置、改进同一记忆对象的更新。这是排期优先级变化，没有出现新的
+可靠度证据。与 hard/purity 的区别是权重作用于写库的图像中心，不删改 IACS 的像素统计。
+风险仍是偏重大面积外观，或过度降低小物体图像对记忆的贡献。
+
+新增 `acc_proto_write_ess_ratio`：每类跨卡批内有效图像数 `sum(w)^2/sum(w^2)` 除以
+合格图像数，再对本批有观察的类别平均。1 表示接近原等权平均，下降表示贡献集中；这不是
+IACS 像素 effective_support，也不是分割准确率。该诊断不参与训练，无需存进 checkpoint。
+
+**Route-CE：监督实际使用的 pre-CCM 路由分数。** 当前 route 的 CCM 候选来自
+`L_route = Norm(F E_blend^T)`，stage-1 CE 仍监督 `L0 = Norm(F E_image^T)`。本臂把原有
+stage-1 CE 的输入替换成 L_route，权重不变，仍只有 stage-1 CE 与 final CE 两项。
+原始 L0 继续计算 n 与写库资格，避免引入用融合结果反复更新支撑度的循环。
+L_route 为 CE 保留梯度，送入 CCM 的 logits 和中心依旧 detach；原型库仍无梯度。
+其他前向计算与 route 相同，在相同参数和 buffer 下最终推理分数逐值相同，区别来自训练
+目标及由此产生的优化轨迹。它是监督接入实验，不是新增预测分支或新损失类型。
+
+该臂检验原始监督与实际路由的分数对象是否需要一致；route 的 +0.37 只提供接入位置的
+正信号，不保证把监督也移过去会更好。风险是强融合时，E_image 的显式中心梯度带有
+`1-lambda` 因子，撤掉对未融合 E 的直接 CE 可能削弱生成记忆观察值的学习。
+因此不把该臂描述为“整个 stage-1 已贯通记忆”：support 与写库资格仍用原始 L0。
+
+两项共用 EfficientFormerV2-S2、ADE20K 512、160k、4 卡 × batch4、seed1370346084、
+每8k验证/保存 best、n0 初值200/softplus、EMA .01、warmup4000。
+均 `load_from=None, resume=False`，从相同骨干预训练初始化开始，不接续 48.49 或144k的
+checkpoint；各自 work_dir 为 config 文件名去掉 `.py`。本批空槽端口按既定格式29501/29502。
+不新增训练参数、外部信息或损失类型，不预先声称零计算/显存开销。
+
+判读：分别与 route 的48.49比较，收取各自 best、last、验证次数、末段曲线和实际运行SHA。
+保留原有 lambda/n0/mix/route_move 针；write 加看有效图像数比例。针的改变不算性能成功，
+两个负结果之间的差不作机制解释。小幅单次正差只登记为候选，不宣称稳定提升。
+
+实现：`mmseg/models/decode_heads/OffSegProtoRouteFollowups.py`，原有赢家代码未改。
+验证：`tools/proto_route_followups_sanity.py` 在 CPU PyTorch 2.6.0+cpu 下通过真实
+Offset Learning、CCM、ACS/IACS 和记忆头的数值检查，仅骨干/融合与框架接口使用桩。
+覆盖共同初始化/参数量、warmup 与激活边界、加权写库解析值、首次/缺失类别、EMA、等支撑
+退化为等权、跨卡不均衡分区的模拟归约、路由CE梯度与context detach、两项CE、eval冻结、
+模型和AdamW保存恢复后的下一次更新逐值一致，以及150类/256通道的小空间前反向。
+实际MMEngine配置解析已核对完整继承差异只有head类型/import/work_dir，训练配方相同。
+未做全模型GPU/FreqFusion或真实多进程DDP运行，不将这些检查写成训练性能证据。
+
 ## 8. 尚缺的关键证据
+
+- §7.10 两项回报的日志、best/last、完成状态、运行配置与 checkpoint 路径；
 
 - §7.9 三项回报的原始日志、best/last、完成状态、实际 seed/训练 SHA 与 checkpoint 路径；
 
