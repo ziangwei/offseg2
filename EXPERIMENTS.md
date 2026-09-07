@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-09-06
+> 最后更新：2026-09-07
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -866,16 +866,16 @@ buffer，常规更新率 .01，首次直接初始化。推理时 P 和网络参�
 这些是前向计算，不是测试时优化或在线写库。EMA 是记忆维护方法，完整 proto 还包括
 按支撑度读取/融合及接入评分；route 进一步改变 CCM 候选权重的计算位置。
 
-### 7.11 Route 后续两槽：写库权重与路由监督（2026-09-06，config-ready）
+### 7.11 Route 后续两槽：写库权重与路由监督（2026-09-06 交付；09-07 回报见 §7.12）
 
 用户新增两个完整训练槽位。本批两项都独立基于当前最高回报 **Proto-route 48.49**，
 不将两项互相叠加，也不组合已低于各自对照的 offset/logn0/static/local。
-48.49 仍是 owner-reported，缺少完整运行日志；以下均为待检验设计，不是新增结果。
+48.49 仍是 owner-reported，缺少完整运行日志；以下动机保留为交付时假设，最新状态见表和 §7.12。
 
 | Config（`local_configs/offseg2/Base/`） | 唯一干预 | 正确对照 | 状态 |
 |---|---|---|---|
-| `offsegccmiacs_protoroutewrite_r4_responsibility_ade20k_160k-512x512.py` | EMA 的批内图像中心由等权改为有界支撑度加权 | route 48.49，暂按 best 口径 | config-ready，无结果 |
-| `offsegccmiacs_protoroutece_r4_responsibility_ade20k_160k-512x512.py` | 现有 stage-1 CE 改为监督融合后的 pre-CCM 路由分数 | route 48.49，暂按 best 口径 | config-ready，无结果 |
+| `offsegccmiacs_protoroutewrite_r4_responsibility_ade20k_160k-512x512.py` | EMA 的批内图像中心由等权改为有界支撑度加权 | route 48.49，暂按 best 口径 | owner-reported 47.70，-0.79；暂停当前实现 |
+| `offsegccmiacs_protoroutece_r4_responsibility_ade20k_160k-512x512.py` | 现有 stage-1 CE 改为监督融合后的 pre-CCM 路由分数 | route 48.49，暂按 best 口径 | killed/interim：约144k时46多，精确值未知；非满程成绩 |
 
 **Route-write：读取已经按本图支撑度区分，写入仍按图像等权。** 当前代码对原始 stage-1
 后验总量 `n_bk > 1` 的图像类别对等权平均 E，再以更新率 .01 写入 P。新臂沿用同一个
@@ -934,7 +934,55 @@ Offset Learning、CCM、ACS/IACS 和记忆头的数值检查，仅骨干/融合�
 实际MMEngine配置解析已核对完整继承差异只有head类型/import/work_dir，训练配方相同。
 未做全模型GPU/FreqFusion或真实多进程DDP运行，不将这些检查写成训练性能证据。
 
+### 7.12 Route-write 回报与 Route-CE 主动停止（2026-09-07）
+
+来源：用户直接回报“Route-write 47.7，Route-CE 在144k时候才46多，我就给kill了”。
+
+| 实验 | 数值与阶段 | 对照 | 当前决策 |
+|---|---|---|---|
+| Route-write | 47.70，owner-reported；best/last、迭代及完成状态未核验 | route48.49，暂按best口径为-0.79 | 不继续当前有界支撑度加权写库 |
+| Route-CE | 约144k时“46多”，用户主动停止，killed/interim；精确值与此前best未知 | route48.49；不计算精确终局差 | 保留原始L0的stage-1 CE，不安排此臂续训 |
+
+完整config见§7.11，交付commit为 `81b62c211c282d54961b4f9b51ea2243a6f335b9`。
+交付协议：ADE20K / EfficientFormerV2-S2 / 512 / 160k / 4卡×batch4 /
+seed1370346084 / 每8k验证，实际运行配置和SHA尚未收到。work_dir仍按各配置文件名
+去掉`.py`生成；实际日志、checkpoint路径与末批lambda/n0/mix/route_move未知，write的
+有效图像数比例也未知。不把“46多”登记为46.00、精确peak或160k最终结果。
+
+两项均未提供继续替换现有赢家的可用收益。write的读数没有支持该加权实现，但不能反推
+所有图像中心等可靠，或断言掉点一定来自大面积偏置。CE的运行已主动停止，其满程上限
+未知；早期设计中“监督与路由对象一致可能更好”的假设没有得到本次可用训练结果支持。
+撤掉原始监督造成梯度减弱或支撑退化仍只是候选解释，需要日志才能诊断。
+助手上一轮将结构一致性作为排期理由偏乐观；不以这两个不成功的实现继续派生新头。
+
+### 7.13 当前单槽：Route-n0=50（2026-09-07，config-ready）
+
+配置：`local_configs/offseg2/Base/offsegccmiacs_protoroute_n050_r4_responsibility_ade20k_160k-512x512.py`。
+唯一模型配置变化：`proto_n0_init=200 → 50`；沿用原 `OffSegCCMIACSProtoRoute`，仍用
+softplus学习n0，学习率与零权重衰减不变。无新head、参数或loss，不叠加write/CE。
+直接对照是route48.49，而非原proto48.12。状态config-ready，无训练结果。
+
+动机：原proto的已核验日志中，ADE n0从200降到192.1572、Stuff降到192.4136，说明
+那些运行未充分探索较低初始融合强度。原proto的ADE末段平均lambda约.9476，但它是
+跨图像/类别等权均值，不能解释为95%的有效预测被记忆替换。route自身完整日志仍缺，
+不能把上述工作点移植成route的已测值，也不能断言route融合过强。
+
+这是一发有效模型的超参数探索，50是相对200低四倍的明确档位，不是数据估计的最优阈值。
+初始时，本图支撑n=50的记忆权重从.80降到.50，n=200从.50降到.20；极低支撑仍主要
+依赖记忆。后续n0继续学习，以上只说明初始混合函数。风险是削弱记忆已有的收益。
+选择降低强度，是为检查保留更多图内中心能否改善route；这是假设，不由两个负结果推出。
+不同于logn0：那一臂保持初始200但更改参数化，本臂保持原参数化、只改变初始档位。
+不同于已撤销的固定lambda归因：本臂仍逐图逐类自适应融合，以提升现有模型为目标。
+
+训练采用同一S2骨干预训练初始化、seed1370346084、ADE512、160k、4卡×batch4、每8k
+验证及best保存；EMA .01、warmup4000和原两项CE均继承。`load_from=None,resume=False`，
+独立work_dir为配置名去掉`.py`，端口29501。模型代码不变，完整配置差异检查只允许
+n0初值/work_dir变化；数值检查核对相同公共初始化、warmup恒等及激活后混合比例变化。
+GPU全模型训练未执行。报告best、last与末段曲线，保留lambda/n0/mix针，不用针代替分数。
+
 ## 8. 尚缺的关键证据
+
+- §7.12 Route-write的best/last与运行日志；Route-CE停止时精确值、此前best及运行日志；
 
 - §7.10 两项回报的日志、best/last、完成状态、运行配置与 checkpoint 路径；
 
