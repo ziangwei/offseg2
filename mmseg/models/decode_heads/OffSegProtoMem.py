@@ -50,7 +50,13 @@ from .offseg_head import OffSegHead
 
 
 def _inverse_softplus(value: float) -> float:
-    return math.log(math.expm1(float(value)))
+    value = float(value)
+    # The inverse differs from value by less than double precision can
+    # represent here. Avoid expm1 overflow for large initial scales (800),
+    # while preserving the original arithmetic for all earlier configs.
+    if value > 700.0:
+        return value
+    return math.log(math.expm1(value))
 
 
 @MODELS.register_module()
