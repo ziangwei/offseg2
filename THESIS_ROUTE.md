@@ -76,10 +76,11 @@
 > .0000（日志精度）。更新速度与二阶修正使用状态伴随变化，不证明范数变化是掉点原因。
 > 后续优先诊断已有权重的P/E相对尺度与残差分数，不直接排归一化或固定mix训练。见§7.16。
 >
-> **当前单槽建议（09-09，tool-ready）**：已有Route/fastmem最佳权重的只读尺度诊断，
-> 按原滑窗协议各做一次验证；记录P/E相对长度与方向、分数相对强度及GT在场/缺席分组。
-> 不重新训练、不改变预测、不更新记忆；结果尚未生成。入口为tools/run_route_diagnosis.sh，
-> 详见EXPERIMENTS.md §7.17。先检验尺度匹配假设是否有证据，不预排归一化新训练。
+> **单槽诊断已完成（09-09）**：两份JSON均2000张图，原Route/fastmem的48.49/47.49复现。
+> P/E范数比均值为1.0155/1.0089，本图中心随原型一起变长；组均值不支持P对E尺度匹配。
+> 在场类lambda约.423/.420，缺席类约.976/.975，不能把全体.945读成有效类别被记忆接管。
+> fastmem少59.18万缺席类错误，多96.89万在场类间错误；同时修正幅度较小，但没有因果
+> 证据支持强制加大修正。本次不追加归一化/固定mix训练，原Route保留。见EXPERIMENTS.md §7.18。
 >
 > 代码分支：`main`。47.79 的训练 commit / seed / checkpoint 路径仍未登记。
 
@@ -812,8 +813,9 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 
 2026-09-09核验更新：route及§7.15三项的best/last、对应迭代、完成状态、实际seed、
 完整配置和末段n0/lambda/mix/route_move已由四份日志补齐，见EXPERIMENTS.md §7.16。
-仍缺实际训练SHA、checkpoint当前存在性、P/E/像素特征相对范数与夹角、分数相对尺度和
-在场/缺席类诊断。交付SHA不能替代实际训练SHA；不再重复索取已提供的这四份日志。
+§7.18已补齐Route/fastmem最佳权重可加载性与原mIoU、P/E/特征尺度、分数相对强度和
+在场/缺席类诊断；其他权重存在性、实际训练SHA及逐类分布仍未知。交付SHA不能替代
+实际训练SHA；不再重复索取已提供的四份日志和两份诊断JSON。
 
 2026-09-06 当前新增缺口：route 48.49、offset 47.22、logn0 47.65 的日志、best/last、
 实际完成状态、seed 与训练 SHA；static 47.71 与 local 47.25 同样待核验，见 EXPERIMENTS.md
