@@ -1225,6 +1225,35 @@ fastmem少591830个缺席类错误，但多968893个在场类间错误，总错�
 这项诊断成功筛掉了尚无支持的具体候选，尚未确认一个新的性能改进模块。后续提出
 方法侧实验时需另给独立依据，不从这里的关联性直接制造新训练结论，也不恢复旧归因队列。
 
+### 7.19 单槽训练：Route-classmix（2026-09-09，config-ready）
+
+配置：`local_configs/offseg2/Base/offsegccmiacs_protoroute_classmix_r4_responsibility_ade20k_160k-512x512.py`。
+直接对照Route best=last48.49。仅将`iacs_classwise_mix=False`改为True，复用现有真实
+IACS实现，全类别共用的一个mix参数变为每类一个，共150个，净增149参数。每类初始
+mix仍.10，其余公共初始化保持一致；不会将诊断中的赢家末段.25硬写成初值。
+
+假设：全局单个mix可能迫使各类别在静态残差与图像自适应二阶修正之间采用同一折中；
+逐类学习让各类独立选择。这是待检验假设，现有诊断没有测得逐类最优mix差异，也不能
+由fastmem修正小且掉点推出加大修正必然有效。该实现不强制增强修正，系数可升可降。
+它是既有IACS组件的细化实验，不包装成发明逐类门控或新的独立数学机制。
+
+历史记录中`offsegccmiacs_r4_top3_classmix`为45.92，同时改变top-3、classmix和初值，
+不能单独归因classmix；本次完整保留Route的所有候选、责任度、非中心二阶矩、原混合
+初值、写库与监督。额外逐类自由度也可能过拟合；初始化等价不保证训练后不掉点。
+
+协议：S2/ADE512/160k/4卡每卡batch4/seed1370346084/每8k验证，n0初值200、EMA新
+信息比例.01、记忆warmup4000与两项原CE均保留；mix沿用lr_mult10、decay0。原骨干
+预训练初始化，`load_from=None,resume=False`，不加载48.49完整模型；work_dir独立为
+配置名去掉.py。逐类mix形状与原共享标量不同，恢复须用本配置自己的checkpoint。
+
+检查：`tools/route_classmix_sanity.py`通过真实MMEngine完整配置单变量对比、真实CPU
+head共同初始化/RNG、起始分数数值等价、逐类梯度非同一值且求和等于共享标量梯度、
+两项CE有限梯度、模型/AdamW断点恢复逐值一致、推理记忆冻结。骨干/框架接口用既有桩，
+尚无GPU全模型训练结果。现有日志已记录mix的mean/std/min/max，可观察是否学出差异。
+
+判读：best/last与完整曲线对照48.49，不与fastmem等负结果比大小；若没有收益，停止
+当前逐类混合实现，不继续给它搜索初值或叠加归一化。模型成绩优先于mix分化诊断。
+
 ## 8. 尚缺的关键证据
 
 - §7.16已补齐route与三变体训练日志；§7.18补齐Route/fastmem最佳权重可加载性、原mIoU复现和P/E/特征相对尺度、在场/缺席类诊断。仍缺实际源代码SHA、其他checkpoint当前存在性及同迭代/逐类分布信息；
