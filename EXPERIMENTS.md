@@ -122,7 +122,7 @@ absent-FP；present-confusion 10.36→10.24；top-2 oracle 仍约 +18.98。
 | `offsegevsfr_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：CGRSeg SFR 融合路径局部恢复 | **46.90** | -0.89 vs responsibility | owner-final；+0.18M；**高于 PCE 0.41，方向与预注册假设一致** |
 | `offsegevboth_iacs_r4_responsibility_ade20k_160k-512x512.py` | 证据侧：PCE + SFR 两站点 | **47.54** | -0.25 vs responsibility | owner-final；比单独 PCE 高 1.05、比单独 SFR 高 0.64，单调性反常 |
 | `offsegccmiacs_proto_r4_responsibility_ade20k_160k-512x512.py` | 跨图类别原型记忆，按支撑度混入单图类表示 | **48.12** | **+0.33 vs responsibility** | owner-final，日志已核验：best @144k，last @160k 为 47.79；seed 1370346084；见 §7.7 |
-| `offsegccmiacs_protoroute_r4_responsibility_ade20k_160k-512x512.py` | 融合中心重算 CCM 候选权重 | **48.49** | **+0.37 vs proto，暂按同口径** | owner-reported，当前最高回报；best/last、完成状态待核验，见 §7.9 |
+| `offsegccmiacs_protoroute_r4_responsibility_ade20k_160k-512x512.py` | 融合中心重算 CCM 候选权重 | **48.49** | **+0.37 vs proto best** | 日志核验：best=last @160k，20次验证，seed1370346084；见 §7.16 |
 | `offsegccmiacs_protooffset_r4_responsibility_ade20k_160k-512x512.py` | 仅记忆偏移量，保留当前 W | 47.22 | -0.90 vs proto，暂按同口径 | owner-reported，暂停当前实现扩展；见 §7.9 |
 | `offsegccmiacs_protologn0_r4_responsibility_ade20k_160k-512x512.py` | n0 改为 log 参数化 | 47.65 | -0.47 vs proto，暂按同口径 | owner-reported，保留原 softplus；见 §7.9 |
 | `offsegccmiacs_pairdir_r4_responsibility_ade20k_160k-512x512.py` | top-32 混淆对的成对判别方向，竞争门控 logit 转移 | **46.00** | **-1.79 vs responsibility** | owner-final；**全项目最差的一次加法**；pair 线三发（46.19/46.95/46.00）全部关闭 |
@@ -807,6 +807,9 @@ FreqFusion 内核或多进程 DDP 训练；两头均直接继承原版跨卡记�
 
 ### 7.9 Proto 三变体用户回报：route 48.49 / offset 47.22 / logn0 47.65（2026-09-06）
 
+**09-09更新：route已核验best=last=48.49 @160k、20次验证及实际seed；见§7.16。**
+下文缺口描述保留为09-06回报时状态；offset/logn0仍无本轮原始日志。
+
 来源：用户本会话直接回报 `protoroute 48.49；protooffset 47.22；logn0 47.65`。
 阶段标记为 **owner-reported，单次读数**；尚未提供本批日志、best/last 区分、对应迭代、
 实际验证次数及完成状态。下表先按既定 best checkpoint 报告惯例与原 proto best48.12 比较，
@@ -870,7 +873,7 @@ buffer，常规更新率 .01，首次直接初始化。推理时 P 和网络参�
 
 用户新增两个完整训练槽位。本批两项都独立基于当前最高回报 **Proto-route 48.49**，
 不将两项互相叠加，也不组合已低于各自对照的 offset/logn0/static/local。
-48.49 仍是 owner-reported，缺少完整运行日志；以下动机保留为交付时假设，最新状态见表和 §7.12。
+交付时48.49仍缺完整运行日志；09-09已核验best=last @160k（§7.16）。以下动机保留为交付时假设，最新状态见表和 §7.12。
 
 | Config（`local_configs/offseg2/Base/`） | 唯一干预 | 正确对照 | 状态 |
 |---|---|---|---|
@@ -1004,14 +1007,13 @@ GPU全模型训练未执行。报告best、last与末段曲线，保留lambda/n0
 
 | 槽位 | Config（`local_configs/offseg2/Base/`） | 相对route的唯一设置变化 | 状态 |
 |---|---|---|---|
-| 1 | `offsegccmiacs_protoroute_n0800_r4_responsibility_ade20k_160k-512x512.py` | n0初值200→800，EMA更新率仍.01 | owner-reported：47.40（-1.09 vs route） |
-| 2 | `offsegccmiacs_protoroute_slowmem_r4_responsibility_ade20k_160k-512x512.py` | EMA更新率.01→.001，n0初值仍200 | owner-reported：47.84（-0.65 vs route） |
-| 3 | `offsegccmiacs_protoroute_fastmem_r4_responsibility_ade20k_160k-512x512.py` | EMA更新率.01→.1，n0初值仍200 | owner-reported：47.49（-1.00 vs route） |
+| 1 | `offsegccmiacs_protoroute_n0800_r4_responsibility_ade20k_160k-512x512.py` | n0初值200→800，EMA更新率仍.01 | 日志核验：best=last 47.40 @160k（-1.09 vs route best） |
+| 2 | `offsegccmiacs_protoroute_slowmem_r4_responsibility_ade20k_160k-512x512.py` | EMA更新率.01→.001，n0初值仍200 | 日志核验：best 47.84 @144k（-0.65），last 47.38 |
+| 3 | `offsegccmiacs_protoroute_fastmem_r4_responsibility_ade20k_160k-512x512.py` | EMA更新率.01→.1，n0初值仍200 | 日志核验：best 47.49 @144k（-1.00），last 47.42 |
 
 09-09用户按上述交付顺序回报“三个分别是47.4，47.84，47.49”。交付提交为`6590b23`；
-协议见下方公共协议。实际运行SHA、seed覆盖、best/last、峰值迭代、完成状态及日志/
-checkpoint路径仍未知，末段n0/lambda/mix/route_move未提供。差值暂沿用route48.49
-的best比较口径，不把本次读数标成已核验的160k最终值。以下动机保留为交付时假设。
+随后提供四份日志，协议、seed、best/last、完成状态及关键读数已核验，见§7.16。
+实际运行SHA及checkpoint文件当前是否仍存在尚未确认。以下动机保留为交付时假设。
 
 结果决策：三项均未超过route48.49，保留原n0初值200、EMA新信息比例.01。停止本轮
 融合强度与更新时间尺度的扩展，不自动追加中间档位或组合。慢臂虽然在本批数值最高，
@@ -1055,9 +1057,79 @@ lambda/mix/route_move、实际seed与SHA。参数变化不等于机制证据，�
 它们之间的差推出正确时间尺度。若三项都没有更好的可用读数，保留200/.01，不预排更密
 网格；收取现有日志后再决定是否还有值得占用训练槽位的方向。
 
+### 7.16 四份Route日志定向核验（2026-09-09）
+
+按用户要求，仅抽取完整配置头、训练进度/关键标量、20次验证汇总及best保存记录；
+未逐行人工阅读日志正文。四份文件各约4.13MB，均是普通文本文件，第二份无扩展名。
+来源目录：`C:/Users/21138/Downloads/`。先按work_dir和配置值辨认，不依赖附件顺序。
+
+| 模型 | 日志文件 | best / 迭代 | last @160k | 最后5次验证均值 |
+|---|---|---|---:|---:|
+| Route | `20260904_181612.log` | 48.49 / 160k | 48.49 | 48.062 |
+| n0=800 | `20260908_025838.log` | 47.40 / 160k | 47.40 | 47.174 |
+| slowmem | `20260908_025813` | 47.84 / 144k | 47.38 | 47.382 |
+| fastmem | `20260908_025812.log` | 47.49 / 144k | 47.42 | 47.080 |
+
+四项均完成160000步，20次验证，实际seed1370346084，deterministic=False，4张A100-80G，
+PyTorch2.1.0+cu118、MMEngine0.10.7；ADE512/S2/每卡batch4/每8k验证，load_from=None、
+resume=False。逐行对比日志内完整配置：各变体相对Route只有预期单个参数和work_dir变化。
+这不等于核验了服务器实际源代码SHA，也不证明相同seed下数值逐位确定。
+Route日志覆盖09-04至09-05；三变体日志均在09-08内结束，09-09为回报/核验日期。
+
+对照差值：best分别为-1.09/-0.65/-1.00；last分别为-1.09/-1.11/-1.07。
+最后5次验证为128k、136k、144k、152k、160k，同一运行内的均值不是多seed均值。
+Route对应47.44/47.89/48.26/48.23/48.49；三变体这5次均逐点低于Route。
+因此当前差距并非仅由某次选中best造成，仍不据此声称多seed稳定性。
+
+下表为训练记录中144000 < iter <= 160000的320条读数的等权均值（每50步记录一次，
+可能已受框架日志窗口平滑），不是验证集统计，也不是只取最后一个batch：
+
+| 读数 | Route | n0=800 | slowmem | fastmem |
+|---|---:|---:|---:|---:|
+| n0 | 192.4463 | 784.3753 | 194.3569 | 190.1654 |
+| proto_lambda | .947282 | .970503 | .948935 | .947528 |
+| proto_lambda_max | .999670 | .999922 | .999658 | .999660 |
+| proto_norm | 23.4405 | 25.9755 | 12.9774 | 72.0405 |
+| proto_route_move | .461143 | .476741 | .420064 | .473948 |
+| iacs_mix | .250286 | .314597 | .986571 | .0000（日志精度） |
+| acs_scale | .162052 | .160791 | .197115 | .072678 |
+| acs_move | .204445 | .137263 | .266824 | .070816 |
+| iacs_effective_support | 3045.35 | 2991.71 | 3248.45 | 2892.25 |
+
+Route最后一条训练读数：n0=192.4300，lambda=.9527，lambda_max=.9999，
+proto_norm=23.9360，route_move=.4084，iacs_mix=.2531，acs_move=.2237。
+慢/快臂的差异早于末段出现：32k时mix分别为.7651/.0022；80k时为.9565/.0000。
+因此mix分化并非只在最后一个记录发生。
+
+解释边界与下一步：
+
+- n0=800末段仍约784，训练没有自动回到原约192的工作点，增强初始融合的探索确实
+  持续改变了融合设置；它没有提升成绩，停止继续扩大该档位。
+- 三个200初值运行的平均lambda都约.948，但IACS mix与原型范数大幅分化。单看融合
+  比例不足以描述这几次训练；记忆更新速度伴随着后续残差度量的不同适应状态。
+- 当前代码中mix控制单位阵与每图二阶矩的混合。fastmem在日志精度下接近静态ACS，
+  仍有非零二次修正，不能写成“关闭整个IACS/残差支路”。slowmem高度采用每图二阶矩，
+  但低于正确对照，不能据此认定更强IACS有益或强制固定mix能修复它。
+- proto_norm是原型库向量的平均长度；没有同时记录本图中心/像素特征长度、P与E的
+  夹角及投影均值，不能把72.04直接叫作错误膨胀，更不能直接证明它导致mix降至零。
+  更值得检查的假设是记忆尺度与中心匹配/二次修正的相对强度如何相互影响；如继续
+  方法设计，应先用现有权重作只读诊断，不直接添加归一化或强制mix的新训练。
+- proto_support在四份日志中恒为109.2267。按当前代码它是类别softmax质量在所有
+  类别上的平均，等于128*128/150；这个均值不提供类别证据变化信息。lambda均值和
+  lambda_max也不区分真实在场/缺席类，不能解读为95%的有效预测被记忆替代。
+- route_move是融合前后归一化logits的平均绝对差；既不是候选集合改变比例，也不
+  证明absent-FP改善。最后5次曲线与工作点支持保留原Route，不预排更密参数网格。
+
+日志记录的服务器checkpoint根目录为
+`/dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2/work_dirs/`，
+其后接各完整config名去掉`.py`。Route与n0=800的best文件名为
+`best_mIoU_iter_160000.pth`；slowmem与fastmem为`best_mIoU_iter_144000.pth`。
+这里只确认日志写有保存成功，未验证这些文件当前仍在服务器。route best验证在源日志
+10268行，slowmem best在9592行，fastmem best在9590行，n0=800 best在10268行。
+
 ## 8. 尚缺的关键证据
 
-- §7.15 三项47.40/47.84/47.49的best/last、完成状态、实际seed/SHA、末段参数及日志/checkpoint；
+- §7.16已补齐route与三变体的best/last、完成状态、实际seed、配置及末段参数；仍缺实际源代码SHA和checkpoint当前存在性，以及P/E/特征相对尺度和在场类诊断；
 
 - §7.14 n0=50的best/last、完成状态、实际训练SHA、末段参数与原始日志；
 
@@ -1065,7 +1137,7 @@ lambda/mix/route_move、实际seed与SHA。参数变化不等于机制证据，�
 
 - §7.10 两项回报的日志、best/last、完成状态、运行配置与 checkpoint 路径；
 
-- §7.9 三项回报的原始日志、best/last、完成状态、实际 seed/训练 SHA 与 checkpoint 路径；
+- §7.9 offset/logn0的原始日志、best/last、完成状态、实际seed/训练SHA与checkpoint路径（route已于§7.16核验）；
 
 - 当前环境、同代码和同随机设置的 OffSeg-B 配对结果；
 - 47.79 与 48.12 的独立复跑或多 seed 均值/方差。**目前没有任何一发在排。** §7.6 第 3 发
