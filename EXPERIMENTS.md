@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-09-08
+> 最后更新：2026-09-09
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -996,7 +996,7 @@ GPU全模型训练未执行。报告best、last与末段曲线，保留lambda/n0
 或所有减少图内中心梯度的实现都会获益。上一轮“n0探索范围窄”只是排期动机，不是
 性能保证。本次新增训练必须继续标明探索性质，避免用单个负差反推普遍机制。
 
-### 7.15 当前三槽：融合强度与记忆时间尺度（2026-09-08，config-ready）
+### 7.15 融合强度与记忆时间尺度（09-08交付；09-09三项均回报负差）
 
 三项均独立基于route48.49，保留等权写库、完整中心E、原始L0的stage-1 CE、融合中心
 路由和完整IACS。没有组合write/CE/offset/local/static。它们是有效模型的参数探索，
@@ -1004,9 +1004,20 @@ GPU全模型训练未执行。报告best、last与末段曲线，保留lambda/n0
 
 | 槽位 | Config（`local_configs/offseg2/Base/`） | 相对route的唯一设置变化 | 状态 |
 |---|---|---|---|
-| 1 | `offsegccmiacs_protoroute_n0800_r4_responsibility_ade20k_160k-512x512.py` | n0初值200→800，EMA更新率仍.01 | config-ready，无结果 |
-| 2 | `offsegccmiacs_protoroute_slowmem_r4_responsibility_ade20k_160k-512x512.py` | EMA更新率.01→.001，n0初值仍200 | config-ready，无结果 |
-| 3 | `offsegccmiacs_protoroute_fastmem_r4_responsibility_ade20k_160k-512x512.py` | EMA更新率.01→.1，n0初值仍200 | config-ready，无结果 |
+| 1 | `offsegccmiacs_protoroute_n0800_r4_responsibility_ade20k_160k-512x512.py` | n0初值200→800，EMA更新率仍.01 | owner-reported：47.40（-1.09 vs route） |
+| 2 | `offsegccmiacs_protoroute_slowmem_r4_responsibility_ade20k_160k-512x512.py` | EMA更新率.01→.001，n0初值仍200 | owner-reported：47.84（-0.65 vs route） |
+| 3 | `offsegccmiacs_protoroute_fastmem_r4_responsibility_ade20k_160k-512x512.py` | EMA更新率.01→.1，n0初值仍200 | owner-reported：47.49（-1.00 vs route） |
+
+09-09用户按上述交付顺序回报“三个分别是47.4，47.84，47.49”。交付提交为`6590b23`；
+协议见下方公共协议。实际运行SHA、seed覆盖、best/last、峰值迭代、完成状态及日志/
+checkpoint路径仍未知，末段n0/lambda/mix/route_move未提供。差值暂沿用route48.49
+的best比较口径，不把本次读数标成已核验的160k最终值。以下动机保留为交付时假设。
+
+结果决策：三项均未超过route48.49，保留原n0初值200、EMA新信息比例.01。停止本轮
+融合强度与更新时间尺度的扩展，不自动追加中间档位或组合。慢臂虽然在本批数值最高，
+仍低于正确对照，不能据此得出“记忆越慢越好”或更稳定的机制结论，也不由单次结果
+证明200/.01普遍最优。下一步优先取得route48.49和本批三项的完整训练日志，核对验证
+曲线、实际配置和工作点，再决定新的方法实验；不恢复用户已撤销的复跑/归因排期。
 
 **槽位1检查增强初始融合。** n0=50读出46.97不支持降低至这个档位；800是以200为中心、
 与50对称的四倍档位，用来检查尚未测量的另一侧。该选择是有限的粗尺度搜索，不从
@@ -1045,6 +1056,8 @@ lambda/mix/route_move、实际seed与SHA。参数变化不等于机制证据，�
 网格；收取现有日志后再决定是否还有值得占用训练槽位的方向。
 
 ## 8. 尚缺的关键证据
+
+- §7.15 三项47.40/47.84/47.49的best/last、完成状态、实际seed/SHA、末段参数及日志/checkpoint；
 
 - §7.14 n0=50的best/last、完成状态、实际训练SHA、末段参数与原始日志；
 
