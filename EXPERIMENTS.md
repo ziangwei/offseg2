@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-09-10
+> 最后更新：2026-09-11
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -1306,6 +1306,38 @@ warmup4000不变。原骨干预训练初始化，load_from=None/resume=False，�
 设置中未逆转旧无记忆IACS-r8的负方向，结束本轮条件重检，不追加r6/r16或r8的scale补救。
 没有日志不能把负差归因为过拟合、矩阵估计噪声或mix饱和；r8比classmix高.19不构成
 支持更大容量的证据，两项应各自对照48.49。本轮没有新增被证实有效的模型改动。
+
+### 7.22 单槽训练：Route-grad（2026-09-11，config-ready）
+
+配置：`local_configs/offseg2/Base/offsegccmiacs_protoroute_grad_r4_responsibility_ade20k_160k-512x512.py`。
+独立基于原Route48.49，唯一配置变化`ccm_detach_context=True→False`，复用既有实现。
+允许final CE沿CCM上下文传播到候选概率、融合中心、像素特征及相关可训练参数；同时
+打开候选权重和上下文中心两条支路，不能将结果单独归因于其中一条。原路由此前也会
+随共享参数学习而变化，本发新增的是经上下文回传的直接梯度，不是让完全冻结的网络首次学习。
+
+动机：原Route的融合中心路由带来已核验的48.49，但CCM条件输入仍按默认detach策略
+使用；让最终分割误差直接影响该条件输入，是一个不同于容量/EMA速度的训练路径假设。
+现有日志不证明此处梯度阻断造成了性能瓶颈，也不保证打开后会涨点。风险是上下文
+不再作为稳定条件输入，出现梯度相互干扰。若负，不自动细分/搜索额外梯度系数。
+
+与失败的Route-CE明确不同：Route-CE将原stage-1 CE替换为融合路由CE；本发保留原始
+L0的stage-1 CE与final CE及权重，不新增/替换监督，不修改support和写库资格。离散
+nucleus候选集合的构造仍no_grad；选中概率的软权重可导，不是可微的离散候选选择。
+EMA缓冲、support及IACS二阶统计路径仍无梯度。原型不会变成参数，推理不更新记忆。
+
+原rank4/共享mix/n0初值200/EMA.01/warmup4000/top_p.9均保留，不组合classmix/r8。
+参数量不变、同权重前向与推理不变；训练反向图更大，不能称训练成本不变。CCM末层
+原零初始化保留，初始上下文梯度可能为零，随该末层学开后才接通有效梯度。
+从原骨干预训练初始化训练S2/ADE512/160k/4卡每卡batch4/seed1370346084/每8k验证，
+load_from=None/resume=False。独立work_dir为配置名去掉.py，端口29501。
+原Route与本发state_dict形状相同，但恢复本发训练须使用本发配置，flag不存入权重。
+
+检查：`tools/route_grad_sanity.py`通过实际MMEngine完整配置仅flag/work_dir变化核验；
+真实CPU head同初始参数/RNG/参数量、相同权重前向逐值相同、以非零CCM末层测试夹具
+验证final CE到routing logits的非零有限梯度、原控制的context detach、两项CE有限训练、
+模型/AdamW恢复逐值一致、相同权重eval逐值相同且记忆冻结。非零末层只用于数值测试，
+未写入训练配置。骨干/框架接口用既有桩，未跑GPU全模型，结果仍为config-ready。
+最终按best/last与48.49比较，不能用梯度非零或route_move变大代替性能收益。
 
 ## 8. 尚缺的关键证据
 
