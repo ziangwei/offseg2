@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-09-09
+> 最后更新：2026-09-10
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -1225,7 +1225,10 @@ fastmem少591830个缺席类错误，但多968893个在场类间错误，总错�
 这项诊断成功筛掉了尚无支持的具体候选，尚未确认一个新的性能改进模块。后续提出
 方法侧实验时需另给独立依据，不从这里的关联性直接制造新训练结论，也不恢复旧归因队列。
 
-### 7.19 单槽训练：Route-classmix（2026-09-09，config-ready）
+### 7.19 单槽训练：Route-classmix（09-09交付；09-10回报47.58）
+
+最新状态：owner-reported **47.58，-0.91 vs Route48.49**，暂按best口径比较。
+完整日志、best/last、迭代及完成状态尚未核验；停止本实现，详见§7.21。
 
 配置：`local_configs/offseg2/Base/offsegccmiacs_protoroute_classmix_r4_responsibility_ade20k_160k-512x512.py`。
 直接对照Route best=last48.49。仅将`iacs_classwise_mix=False`改为True，复用现有真实
@@ -1249,12 +1252,15 @@ mix仍.10，其余公共初始化保持一致；不会将诊断中的赢家末�
 检查：`tools/route_classmix_sanity.py`通过真实MMEngine完整配置单变量对比、真实CPU
 head共同初始化/RNG、起始分数数值等价、逐类梯度非同一值且求和等于共享标量梯度、
 两项CE有限梯度、模型/AdamW断点恢复逐值一致、推理记忆冻结。骨干/框架接口用既有桩，
-尚无GPU全模型训练结果。现有日志已记录mix的mean/std/min/max，可观察是否学出差异。
+交付时无GPU全模型训练结果；09-10已回报47.58，运行日志仍未提供。现有日志接口记录mix的mean/std/min/max。
 
 判读：best/last与完整曲线对照48.49，不与fastmem等负结果比大小；若没有收益，停止
 当前逐类混合实现，不继续给它搜索初值或叠加归一化。模型成绩优先于mix分化诊断。
 
-### 7.20 第二槽训练：Route-IACS-r8（2026-09-09，config-ready）
+### 7.20 第二槽训练：Route-IACS-r8（09-09交付；09-10回报47.77）
+
+最新状态：owner-reported **47.77，-0.72 vs Route48.49**，暂按best口径比较。
+完整日志、best/last、迭代及完成状态尚未核验；停止本实现，详见§7.21。
 
 配置：`local_configs/offseg2/Base/offsegccmiacs_protoroute_r8_responsibility_ade20k_160k-512x512.py`。
 独立从原Route48.49出发，唯一模型设置变化`acs_rank=4→8`，仍是共享IACS mix，不叠加
@@ -1278,10 +1284,32 @@ warmup4000不变。原骨干预训练初始化，load_from=None/resume=False，�
 验证：`tools/route_rank8_sanity.py`通过实际MMEngine继承配置单变量核对、真实CPU head
 的8方向正交、显式残差投影与二次评分对照、8x8矩阵形状/半正定/迹、所有8方向梯度、
 两项CE有限训练、模型与AdamW断点恢复逐值一致、推理缓冲冻结。骨干/框架用既有桩，
-尚无GPU训练结果。不因classmix或r8任一单独结果好就自动组合；各自首先对照48.49。
+交付时无GPU训练结果，09-10已回报47.77。两项当前均低于48.49，不组合。
 若当前r8仍负，则停止在Route上继续扩rank或给r8调scale/mix。
 
+### 7.21 Route-classmix / r8两项回报（2026-09-10）
+
+来源：用户明确回报“classmix 47.58 r8 47.77”，对应§7.19/7.20完整配置。
+
+| 模型 | mIoU | vs Route48.49 | 交付commit | 当前状态 |
+|---|---:|---:|---|---|
+| Route-classmix | 47.58 | -0.91 | 47fbbfd | owner-reported；停止逐类mix实现 |
+| Route-IACS-r8 | 47.77 | -0.72 | d232f09 | owner-reported；停止当前rank扩展 |
+
+差值暂沿用best口径；未提供本轮原始日志，不能将数字写成已核验的160k last或完整
+运行best。交付协议均S2/ADE512/160k/总batch16/seed1370346084/每8k验证、原骨干
+预训练初始化，load_from=None/resume=False；实际seed覆盖、训练SHA、运行完成状态、
+对应迭代、best/last、末段mix/scale/修正幅度及checkpoint/log路径仍未知。
+
+两项均未提高原Route成绩，保留rank4、共享mix。classmix在不同时修改top-k与初值的
+本次设置中仍负，不继续调逐类mix初值/学习率，也不将其与r8组合。r8在当前记忆路由
+设置中未逆转旧无记忆IACS-r8的负方向，结束本轮条件重检，不追加r6/r16或r8的scale补救。
+没有日志不能把负差归因为过拟合、矩阵估计噪声或mix饱和；r8比classmix高.19不构成
+支持更大容量的证据，两项应各自对照48.49。本轮没有新增被证实有效的模型改动。
+
 ## 8. 尚缺的关键证据
+
+- §7.21 classmix/r8的best/last、完成状态、实际seed/SHA、关键标量及日志/checkpoint路径尚未核验；
 
 - §7.16已补齐route与三变体训练日志；§7.18补齐Route/fastmem最佳权重可加载性、原mIoU复现和P/E/特征相对尺度、在场/缺席类诊断。仍缺实际源代码SHA、其他checkpoint当前存在性及同迭代/逐类分布信息；
 
