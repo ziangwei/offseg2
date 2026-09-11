@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-09-11
+> 最后更新：2026-09-12
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -1338,6 +1338,48 @@ load_from=None/resume=False。独立work_dir为配置名去掉.py，端口29501�
 模型/AdamW恢复逐值一致、相同权重eval逐值相同且记忆冻结。非零末层只用于数值测试，
 未写入训练配置。骨干/框架接口用既有桩，未跑GPU全模型，结果仍为config-ready。
 最终按best/last与48.49比较，不能用梯度非零或route_move变大代替性能收益。
+
+### 7.23 两个新增槽位：原Route跨数据集训练（2026-09-12，config-ready）
+
+用户明确希望做泛化；本批将已核验ADE48.49的原Route迁移到COCO-Stuff164K与Cityscapes，
+均保留EfficientFormerV2-S2。§7.22 Route-grad仍等待结果，不将未测改动带入泛化实验。
+两项均在目标数据集用目标标签重新端到端训练，从原骨干预训练初始化、重新建立目标
+类别记忆；这是方法跨数据集适用性实验，不是ADE权重零样本跨域推理或不适配的域泛化。
+
+| 槽位 | 完整config（local_configs/offseg2/Base/） | 目标协议 | 对照口径 |
+|---|---|---|---|
+| 新槽1 / 29502 | `offsegccmiacs_protoroute_r4_responsibility_stuff164k_80k-512x512.py` | Stuff164K，171类，512，80k，4卡×batch4，每4k验证，seed2000199364 | 原proto44.59为主要对照；无记忆44.33与本地OffSeg44.26为历史参照 |
+| 新槽2 / 29503 | `offsegccmiacs_protoroute_r4_responsibility_cityscapes_160k-1024x1024.py` | Cityscapes，19类，1024，160k，4卡×batch2，每8k验证，seed1370346084 | 当前没有已测本地OffSeg配对基线，先记录绝对结果，不把论文80.5当配对对照 |
+
+Stuff种子取自已核验`20260902_023950.log`的2000199364，便于比较是否保留路由新增收益；
+不更改已运行proto的代码/config。Cityscapes沿用已有目标数据集训练配方，保持总batch8，
+避免旧2卡配方每卡4张在4卡服务器上意外变成batch16。当前选两个数据集覆盖，未占用
+一槽重跑Cityscapes基线；将来若要宣称配对增益，仍须补同环境/协议/seed的基线结果。
+历史PARSeg3 Cityscapes80.82可作参考，不是OffSeg配对基线。
+
+两项head与原ADE Route相比仅num_classes不同：原rank4/共享mix、CCM detach=True、
+IACS统计detach=True、责任度、全部候选、两项CE、n0初值200/EMA.01/warmup4000均保留，
+不引入Route-grad、classmix或r8。n0学习率10倍/无衰减保留，目标训练schedule不变。
+跨数据集的类数、分辨率和支撑度变化可能改变融合实际使用程度，作为结果观察，不预先
+按类别数缩放n0，也不从类别数推导Cityscapes必定收益更大。
+
+load_from=None/resume=False，不能加载150类ADE的完整head/记忆checkpoint。Stuff输出
+`work_dirs/offsegccmiacs_protoroute_r4_responsibility_b_stuff164k_80k-512x512`；Cityscapes输出
+`work_dirs/offsegccmiacs_protoroute_r4_responsibility_cityscapes_160k-1024x1024`。均保存best
+mIoU、last和2个滚动快照，断点恢复必须使用各自目标config。当前未验证服务器数据/预训练
+文件实时可达性，数据根沿用现有项目路径：Stuff为既有dss coco_stuff164k目录；Cityscapes
+为`data/cityscapes/`。不改变数据预处理/标注映射/验证滑窗设置。
+
+检查：`tools/route_generalisation_sanity.py`通过实际MMEngine完整继承配置检查，包括
+与原ADE head仅类数不同、原目标数据加载与schedule不变、种子/总batch/best保存设置、
+初始化与独立目录；真实CPU head以19/171类检查输出与记忆形状、warmup、原两项CE
+有限梯度、checkpoint恢复与推理记忆冻结。骨干/框架接口用既有桩，未实际执行GPU训练，
+两项均无结果；正式FLOPs/训练耗时仍待实测。Cityscapes1024裁剪预计比Stuff更重，
+如遇作业时限应保留并恢复本次optimizer/scheduler状态，不擅改batch或压缩schedule。
+
+回报收取各自best、last、迭代和完成状态；Stuff路由增益对44.59比较，Cityscapes在缺
+配对基线时不作强因果归因。mix接近0不能等价为整个残差修正关闭，也不根据旧proto
+Stuff的mix状态预设新Route的结果。泛化成立与否最终以目标数据集的匹配对照为准。
 
 ## 8. 尚缺的关键证据
 

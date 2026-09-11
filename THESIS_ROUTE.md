@@ -1,6 +1,6 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-09-11
+> 最后更新：2026-09-12
 >
 > **ADE20K 当前最高：proto-route 48.49**（09-09日志核验，best=last @160k，20次验证）。
 > best口径为 `+0.37 vs 原 proto 48.12`、`+0.70 vs 无记忆 47.79`；实际seed1370346084。
@@ -88,11 +88,17 @@
 > r8在记忆路由上的条件重检没有收益，不能由其高于classmix .19认定容量方向正确。
 > 交付commit分别47fbbfd/d232f09，具体协议与解释边界见EXPERIMENTS.md §7.19–7.21。
 >
-> **当前单槽（09-11，config-ready）：Route-grad。** 原Route48.49上仅将ccm_detach_context
+> **原槽（09-11交付，结果待回报）：Route-grad。** 原Route48.49上仅将ccm_detach_context
 > 改为False，使final CE经CCM候选软权重和上下文中心回传梯度。原stage-1 CE保留，
 > 与失败Route-CE的监督替换不同；EMA/support/离散nucleus选择/IACS统计仍无梯度。
 > 不加参数或损失，原rank4/共享mix/200/.01保持；从原骨干初始化160k，详见§7.22。
 > 同权重前向不变不代表训练轨迹不变；收益待测，额外反向路径可能干扰条件输入学习。
+>
+> **09-12新增两槽泛化（config-ready）**：原Route/S2分别在Stuff164K-B与Cityscapes-B
+> 重新训练；Stuff171类/512/80k/总batch16/seed2000199364，对照原proto44.59；City19类/
+> 1024/160k/总batch8/seed1370346084，尚缺本地OffSeg配对结果。两者保留原Route设置，
+> 不混入Route-grad，从骨干预训练初始化、在目标数据集重建记忆，非ADE权重零样本测试。
+> 端口29502/29503，具体配置、对照缺口和验证见EXPERIMENTS.md §7.23。
 >
 > 代码分支：`main`。47.79 的训练 commit / seed / checkpoint 路径仍未登记。
 
