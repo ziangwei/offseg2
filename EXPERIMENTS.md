@@ -1339,7 +1339,7 @@ load_from=None/resume=False。独立work_dir为配置名去掉.py，端口29501�
 未写入训练配置。骨干/框架接口用既有桩，未跑GPU全模型，结果仍为config-ready。
 最终按best/last与48.49比较，不能用梯度非零或route_move变大代替性能收益。
 
-### 7.23 两个新增槽位：原Route跨数据集训练（2026-09-12，config-ready）
+### 7.23 原Route跨数据集训练（09-12交付；Stuff-B已回报44.75，见§7.26）
 
 用户明确希望做泛化；本批将已核验ADE48.49的原Route迁移到COCO-Stuff164K与Cityscapes，
 均保留EfficientFormerV2-S2。§7.22 Route-grad已回报47.81，低于原Route，不带入泛化实验。
@@ -1393,7 +1393,7 @@ Stuff的mix状态预设新Route的结果。泛化成立与否最终以目标数�
 ### 7.25 当前三槽：Stuff-T原Route + 两项独立上下文结构（2026-09-12，config-ready）
 
 用户明确指定只占一槽做COCO-Stuff-T Route，另两槽探索新结构。本批不安排额外
-OffSeg或原proto对照训练。§7.23已交付Stuff-B/Cityscapes-B仍无回报，不重复排入。
+OffSeg或原proto对照训练。§7.23的Stuff-B于09-13回报44.75，Cityscapes-B仍无回报，不重复排入。
 
 | 槽位/端口 | 配置（local_configs/offseg2/下） | 目的与对照 |
 |---|---|---|
@@ -1442,10 +1442,39 @@ Route完整checkpoint当等价恢复；断点恢复使用各自新配置及对�
 骨干/框架接口用既有桩，未跑GPU全模型；三项均无训练结果。按各自best/last与协议
 判读，ADE只有超过48.49才产生正结果；不能在两项失败间比较后声称机制成立。
 
+### 7.26 Stuff-B Route：44.75（2026-09-13，owner-reported，末次权重独立验证）
+
+用户先确认训练已完成、最后验证出错，明确不重新训练；随后请求已保存checkpoint的
+验证命令，并回报“Stuff-B Route 44.75”。据此登记为原训练末次权重独立验证读数，
+按所给命令对应80k；不是新种子复跑，也不宣称已核验best=last。评估日志尚未提供，
+实际checkpoint元数据、命令是否覆盖、此前best仍待日志核验。
+
+配置：`local_configs/offseg2/Base/offsegccmiacs_protoroute_r4_responsibility_stuff164k_80k-512x512.py`。
+协议：COCO-Stuff164K/B/EfficientFormerV2-S2/171类/512/80k/4卡×batch4，原单尺度滑窗；
+配置seed2000199364，与原Stuff-B proto已核验seed相同；本次实际seed和运行SHA待核验。
+配置交付commit `de4aed6`，不能代替实际训练SHA。
+命令指定权重：`work_dirs/offsegccmiacs_protoroute_r4_responsibility_b_stuff164k_80k-512x512/iter_80000.pth`；
+评估输出：`work_dirs/protoroute_stuff_b_eval_80000`。关键末段标量和具体日志文件尚未收到。
+
+| Stuff-B模型 | mIoU | Route相对增量 |
+|---|---:|---:|
+| 本地OffSeg-B | 44.26 | +0.49 |
+| 无记忆responsibility-IACS | 44.33 | +0.42 |
+| 原proto | 44.59 | **+0.16** |
+| 原Route | **44.75** | — |
+
+当前事实：Route相对原proto的正读数在ADE为+0.37，在Stuff-B为+0.16，支持继续保留
+Route为主模型并完成已有Stuff-T/Cityscapes及两项结构实验。原proto Stuff的44.59已核验
+best=last@80k，此次44.75按末次权重命令登记。两数据集均为单次训练证据，尚不能写
+稳定提升或显著性，也不能把跨数据集重新训练写成零样本域泛化。未读取本次mix等
+标量，不能由旧proto的mix≈0推断Route同样退化为静态ACS。此回报不自动新增训练。
+
 ## 8. 尚缺的关键证据
 
+- §7.26 Stuff-B Route验证日志、实际80k权重元数据/seed/训练SHA、此前best和末段标量；
+
 - §7.24 Route-grad的best/last、完成状态、实际seed/SHA、日志与checkpoint路径；
-- §7.23与§7.25泛化/新结构的训练结果，Tiny历史对照seed与统一成本测量；
+- §7.23 Cityscapes-B与§7.25三项的训练结果，Tiny历史对照seed与统一成本测量；
 
 - §7.21 classmix/r8的best/last、完成状态、实际seed/SHA、关键标量及日志/checkpoint路径尚未核验；
 

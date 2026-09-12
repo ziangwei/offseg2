@@ -1,6 +1,6 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-09-12
+> 最后更新：2026-09-13
 >
 > **ADE20K 当前最高：proto-route 48.49**（09-09日志核验，best=last @160k，20次验证）。
 > best口径为 `+0.37 vs 原 proto 48.12`、`+0.70 vs 无记忆 47.79`；实际seed1370346084。
@@ -92,21 +92,27 @@
 > 和完成状态待核验。停止此次解除CCM上下文停止梯度的实现，原Route保留detach=True。
 > 不组合进泛化或新结构，不由单次负结果推断所有联合优化无效。详见§7.24。
 >
-> **09-12新增两槽泛化（config-ready）**：原Route/S2分别在Stuff164K-B与Cityscapes-B
+> **09-12交付两槽泛化（Stuff-B已回报44.75；Cityscapes-B待回报）**：原Route/S2分别在Stuff164K-B与Cityscapes-B
 > 重新训练；Stuff171类/512/80k/总batch16/seed2000199364，对照原proto44.59；City19类/
 > 1024/160k/总batch8/seed1370346084，尚缺本地OffSeg配对结果。两者保留原Route设置，
 > 不混入Route-grad，从骨干预训练初始化、在目标数据集重建记忆，非ADE权重零样本测试。
 > 端口29502/29503，具体配置、对照缺口和验证见EXPERIMENTS.md §7.23。
 >
 > **当前新三槽（09-12，config-ready）：Stuff-T原Route + ADE Route-spatial + ADE Route-relation。**
-> 用户指定一槽泛化、两槽结构探索，不新增基线或原proto对照训练；前两项B规模泛化
-> 尚无回报。Tiny用S1/171类/512/80k/seed2000199364；两结构独立基于S2/ADE48.49，
+> 用户指定一槽泛化、两槽结构探索，不新增基线或原proto对照训练；Stuff-B已回报44.75，
+> Cityscapes-B待回报。Tiny用S1/171类/512/80k/seed2000199364；两结构独立基于S2/ADE48.49，
 > 用原160k/seed1370346084。Spatial在CCM前加入邻域竞争上下文，Relation在类别中心
 > 间做自注意力后补充像素上下文；均为零初始化残差，分别新增2304/33280参数。
 > 原记忆、路由概率、评分中心、IACS与两项CE保持；都是未验证假设，不把常规算子当原创。
 > 端口29504/29505/29506，配置与风险见EXPERIMENTS.md §7.25。代码CPU检查通过，未跑GPU。
 >
 > 代码分支：`main`。47.79 的训练 commit / seed / checkpoint 路径仍未登记。
+
+> **09-13 Stuff-B Route 44.75**：用户报告训练完成、末次验证出错后，独立评估原权重。
+> 按所给iter_80000.pth命令登记，日志待核验，不是重新训练或已确认整程best。
+> 相对原proto44.59 **+0.16**，无记忆44.33 **+0.42**，本地OffSeg-B44.26 **+0.49**。
+> Route相对proto在ADE/Stuff-B均有单次正读数（+0.37/+0.16），继续保留主模型。
+> 实际seed/SHA、此前best及末段统计待核验；当前其余四项实验未回报。详见§7.26。
 
 这是本仓库关于研究目标、约束、方法、实验事实和后续工作的**唯一权威入口**。
 新会话应先读本文件，再按需查阅 [EXPERIMENTS.md](EXPERIMENTS.md) 和代码。
@@ -145,6 +151,11 @@ Responsibility：用跨类竞争后的像素责任度估计该二阶几何
 当前 response-pyramid 实验进一步把全图响应证据扩展为全局/区域证据。
 
 ### 当前证据
+
+Stuff-B最新链条为本地OffSeg44.26 → 无记忆44.33 → proto44.59 → **Route44.75**。
+44.75来自用户在末次验证故障后独立评估原权重的回报，按80k命令登记，日志未核验。
+Route相对proto在ADE/Stuff-B分别+0.37/+0.16，提供两数据集的单次正向证据；
+尚不证明跨种子稳定性，也不由此推出动态二阶统计在Stuff上的使用状态。
 
 | 受控链条 | ADE20K mIoU | 相对前一步 |
 |---|---:|---:|
@@ -832,7 +843,7 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 - “13M 档全球最好”或 SOTA；
 - 相对 45.9 的严格配对增益；
 - 多 seed 稳定性；
-- Stuff 泛化已成立；
+- Stuff 跨种子稳定泛化已成立（已有Route44.75的单次正向回报）；
 - 精确 FLOPs/latency 优势；
 - responsibility 解决 absent-class presence；
 - 子空间、二阶矩或 responsibility 本身是原创；
@@ -841,7 +852,8 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 ## 14. 完成论文证据链前必须补齐
 
 2026-09-12新增：Route-grad47.81的best/last、完成状态与实际运行日志待核验；
-Stuff-B/Cityscapes-B及本批Stuff-T/两项ADE新结构无结果。Tiny历史对照seed和
+Stuff-B于09-13回报44.75，待补评估日志、实际权重迭代/seed/SHA、此前best和末段统计；
+Cityscapes-B及本批Stuff-T/两项ADE新结构无结果。Tiny历史对照seed和
 新模块全模型计算成本未核验。此处证据缺口不代表新增训练排期，当前三槽见§7.25。
 
 2026-09-10新增：classmix47.58/r8 47.77的best/last、对应迭代、完成状态、实际seed/SHA、
