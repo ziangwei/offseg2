@@ -88,17 +88,23 @@
 > r8在记忆路由上的条件重检没有收益，不能由其高于classmix .19认定容量方向正确。
 > 交付commit分别47fbbfd/d232f09，具体协议与解释边界见EXPERIMENTS.md §7.19–7.21。
 >
-> **原槽（09-11交付，结果待回报）：Route-grad。** 原Route48.49上仅将ccm_detach_context
-> 改为False，使final CE经CCM候选软权重和上下文中心回传梯度。原stage-1 CE保留，
-> 与失败Route-CE的监督替换不同；EMA/support/离散nucleus选择/IACS统计仍无梯度。
-> 不加参数或损失，原rank4/共享mix/200/.01保持；从原骨干初始化160k，详见§7.22。
-> 同权重前向不变不代表训练轨迹不变；收益待测，额外反向路径可能干扰条件输入学习。
+> **09-12回报：Route-grad 47.81（-0.68 vs Route48.49）。** owner-reported，best/last
+> 和完成状态待核验。停止此次解除CCM上下文停止梯度的实现，原Route保留detach=True。
+> 不组合进泛化或新结构，不由单次负结果推断所有联合优化无效。详见§7.24。
 >
 > **09-12新增两槽泛化（config-ready）**：原Route/S2分别在Stuff164K-B与Cityscapes-B
 > 重新训练；Stuff171类/512/80k/总batch16/seed2000199364，对照原proto44.59；City19类/
 > 1024/160k/总batch8/seed1370346084，尚缺本地OffSeg配对结果。两者保留原Route设置，
 > 不混入Route-grad，从骨干预训练初始化、在目标数据集重建记忆，非ADE权重零样本测试。
 > 端口29502/29503，具体配置、对照缺口和验证见EXPERIMENTS.md §7.23。
+>
+> **当前新三槽（09-12，config-ready）：Stuff-T原Route + ADE Route-spatial + ADE Route-relation。**
+> 用户指定一槽泛化、两槽结构探索，不新增基线或原proto对照训练；前两项B规模泛化
+> 尚无回报。Tiny用S1/171类/512/80k/seed2000199364；两结构独立基于S2/ADE48.49，
+> 用原160k/seed1370346084。Spatial在CCM前加入邻域竞争上下文，Relation在类别中心
+> 间做自注意力后补充像素上下文；均为零初始化残差，分别新增2304/33280参数。
+> 原记忆、路由概率、评分中心、IACS与两项CE保持；都是未验证假设，不把常规算子当原创。
+> 端口29504/29505/29506，配置与风险见EXPERIMENTS.md §7.25。代码CPU检查通过，未跑GPU。
 >
 > 代码分支：`main`。47.79 的训练 commit / seed / checkpoint 路径仍未登记。
 
@@ -166,6 +172,9 @@ route约23.44。下一步关注相对尺度和残差强度的只读诊断，不�
 proto_support均值109.2267恒等于128*128/150，不能作证据量变化的诊断。详见§7.16。
 09-10新增classmix47.58/r8 47.77，分别低于48.49达.91/.72；原rank4/共享mix继续保留。
 两项未带来可用增益，不由单次负差反推普遍过拟合或rank4最优，停止对应扩展与组合。
+09-12 Route-grad47.81也低于48.49，保留上下文停止梯度。当前三槽按用户要求为
+Stuff-T原Route及两项ADE新上下文结构；空间邻域与类别关系分别独立尝试，均未出结果。
+前者增加局部竞争信息，后者增加类别间消息；不改评分中心、IACS或损失，也不预设收益。
 本环境无 proto 同配置换 seed 的已测差为 `47.79 -> 46.82`，所以 48.12 的 `+0.33`
 目前只能写成单次 best 读数；§7.6 的 proto @ seed2026 已由用户撤销，不列入当前三槽位。
 尚未完成 Params/FLOPs/延迟
@@ -830,6 +839,10 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 - 整体模型零额外 loss。
 
 ## 14. 完成论文证据链前必须补齐
+
+2026-09-12新增：Route-grad47.81的best/last、完成状态与实际运行日志待核验；
+Stuff-B/Cityscapes-B及本批Stuff-T/两项ADE新结构无结果。Tiny历史对照seed和
+新模块全模型计算成本未核验。此处证据缺口不代表新增训练排期，当前三槽见§7.25。
 
 2026-09-10新增：classmix47.58/r8 47.77的best/last、对应迭代、完成状态、实际seed/SHA、
 运行日志和末段mix/scale/修正幅度尚待核验，见EXPERIMENTS.md §7.21。

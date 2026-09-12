@@ -1307,7 +1307,7 @@ warmup4000不变。原骨干预训练初始化，load_from=None/resume=False，�
 没有日志不能把负差归因为过拟合、矩阵估计噪声或mix饱和；r8比classmix高.19不构成
 支持更大容量的证据，两项应各自对照48.49。本轮没有新增被证实有效的模型改动。
 
-### 7.22 单槽训练：Route-grad（2026-09-11，config-ready）
+### 7.22 单槽训练：Route-grad（09-11交付；09-12回报47.81，见§7.24）
 
 配置：`local_configs/offseg2/Base/offsegccmiacs_protoroute_grad_r4_responsibility_ade20k_160k-512x512.py`。
 独立基于原Route48.49，唯一配置变化`ccm_detach_context=True→False`，复用既有实现。
@@ -1342,7 +1342,7 @@ load_from=None/resume=False。独立work_dir为配置名去掉.py，端口29501�
 ### 7.23 两个新增槽位：原Route跨数据集训练（2026-09-12，config-ready）
 
 用户明确希望做泛化；本批将已核验ADE48.49的原Route迁移到COCO-Stuff164K与Cityscapes，
-均保留EfficientFormerV2-S2。§7.22 Route-grad仍等待结果，不将未测改动带入泛化实验。
+均保留EfficientFormerV2-S2。§7.22 Route-grad已回报47.81，低于原Route，不带入泛化实验。
 两项均在目标数据集用目标标签重新端到端训练，从原骨干预训练初始化、重新建立目标
 类别记忆；这是方法跨数据集适用性实验，不是ADE权重零样本跨域推理或不适配的域泛化。
 
@@ -1381,7 +1381,71 @@ mIoU、last和2个滚动快照，断点恢复必须使用各自目标config。�
 配对基线时不作强因果归因。mix接近0不能等价为整个残差修正关闭，也不根据旧proto
 Stuff的mix状态预设新Route的结果。泛化成立与否最终以目标数据集的匹配对照为准。
 
+### 7.24 Route-grad回报（2026-09-12，owner-reported）
+
+来源：用户直接回报“Route-grad 47.81，现在还有三个槽位”。相对原Route48.49为
+**-0.68**，暂按best口径比较，实际best/last、停止迭代和完成状态尚未核验。
+配置为`local_configs/offseg2/Base/offsegccmiacs_protoroute_grad_r4_responsibility_ade20k_160k-512x512.py`，
+交付commit `7e5b1c2`；配置协议S2/ADE20K512/160k/4卡×batch4/seed1370346084。
+实际运行SHA/seed、末段标量、日志与checkpoint路径未提供。停止当前解除CCM上下文
+停止梯度的实现；原Route保留detach=True，不从单次负结果断言所有联合优化均无效。
+
+### 7.25 当前三槽：Stuff-T原Route + 两项独立上下文结构（2026-09-12，config-ready）
+
+用户明确指定只占一槽做COCO-Stuff-T Route，另两槽探索新结构。本批不安排额外
+OffSeg或原proto对照训练。§7.23已交付Stuff-B/Cityscapes-B仍无回报，不重复排入。
+
+| 槽位/端口 | 配置（local_configs/offseg2/下） | 目的与对照 |
+|---|---|---|
+| 1 / 29504 | `Tiny/offsegccmiacs_protoroute_r4_responsibility_stuff164k_80k-512x512.py` | 原Route迁移S1/Stuff171类/512/80k；历史OffSeg-T41.66、无记忆42.08仅作参考，无Tiny原proto结果 |
+| 2 / 29505 | `Base/offsegccmiacs_protoroute_spatial_r4_responsibility_ade20k_160k-512x512.py` | ADE原Route48.49上，在CCM之前增加局部竞争上下文残差 |
+| 3 / 29506 | `Base/offsegccmiacs_protoroute_relation_r4_responsibility_ade20k_160k-512x512.py` | ADE原Route48.49上，在CCM之前增加类别间消息形成的上下文残差 |
+
+Tiny沿用现有Stuff数据/增强/滑窗/优化器/80k配方，4卡×batch4、seed2000199364，
+每4k验证。该seed与Stuff-B proto一致，但历史Tiny两项seed未核验，不能据差值孤立
+归因Route新增接入。骨干为EfficientFormerV2-S1；在目标标签上重新训练和建立记忆，
+不是ADE模型的零样本泛化。Tiny父配置中的历史机制预测不作为本次结论。
+
+两项结构均独立继承ADE原Route：S2/512/160k/4卡×batch4/seed1370346084/每8k验证。
+记忆200/.01/4000、原候选概率、CCM上下文detach=True、原评分和残差参考中心、
+rank4/共享mix/IACS统计detach=True及原两项CE均保持。新增类位于
+`mmseg/models/decode_heads/OffSegRouteContext.py`，仅改变传入CCM调节网络的上下文。
+
+**Spatial：** 原Route为每个像素用候选概率加权类别中心得到竞争上下文z；新增
+逐通道3×3卷积，从邻近像素的z学习局部残差，再加回该像素z。256通道增加2304参数。
+卷积无偏置、权重零初始化，使用真实特征H/W与零填充。假设邻域的竞争信息可补充
+逐像素判断；边界可能被错误邻居干扰。旧最终修正图卷积46.99和区域响应金字塔失败
+不是本模块的正证据；这里处理的是CCM前的竞争上下文，不是平滑最终分割分数。
+
+**Relation：** 对融合类别中心做LayerNorm和32维查询/键/值投影，在类别间做
+自注意力，将32维消息投回256维，再按原候选概率汇总到各像素并加回z。增加33280参数。
+输出投影零初始化，其余常规初始化；类别关系是学习到的有向权重，不是对称协方差，
+没有外部语义标签或额外监督。假设先交换类别信息能改善竞争上下文；也可能仅增加
+冗余信息或受缺席类别干扰。历史全局均值场景注入46.46和成对分类支路失败不支持
+本发必然有效；本发没有成对分类输出，也不使用全图均值场景向量。
+
+逐通道卷积与自注意力均为常规组件，本次探索其在Route上下文位置的用法，不声称
+发明这些算子。两项新增残差初始为零，同公共权重下前向保持原Route；原CCM生成器
+末层也为零，因此新模块需等该层学开才有有效梯度。零初始输出不保证训练收益。
+Relation输出投影学开后查询/键/值才有有效梯度。两项增加推理计算和训练成本；
+参数增量不是全模型FLOPs/显存/速度测量，不把它们与原Route同时组合。
+
+三项load_from=None/resume=False，从各自骨干预训练初始化。Tiny输出
+`work_dirs/offsegccmiacs_protoroute_r4_responsibility_t_stuff164k_80k-512x512`；
+两项ADE输出为各自配置名去掉.py。新结构将旧CCM包在`ccm.core`下，不能直接拿原
+Route完整checkpoint当等价恢复；断点恢复使用各自新配置及对应optimizer/scheduler。
+
+验证：`tools/route_context_sanity.py`通过真实MMEngine完整配置比对、真实CPU head
+非方形特征测试、记忆预热与启用后零残差前向逐值一致、保持上下文停止梯度、
+新增参数有效有限梯度、原两项CE、模型/AdamW恢复下一步逐值一致、推理记忆冻结，
+以及类别重排等变性和局部感受野检查。激活原CCM末层仅为测试夹具，不修改训练初始化。
+骨干/框架接口用既有桩，未跑GPU全模型；三项均无训练结果。按各自best/last与协议
+判读，ADE只有超过48.49才产生正结果；不能在两项失败间比较后声称机制成立。
+
 ## 8. 尚缺的关键证据
+
+- §7.24 Route-grad的best/last、完成状态、实际seed/SHA、日志与checkpoint路径；
+- §7.23与§7.25泛化/新结构的训练结果，Tiny历史对照seed与统一成本测量；
 
 - §7.21 classmix/r8的best/last、完成状态、实际seed/SHA、关键标量及日志/checkpoint路径尚未核验；
 
