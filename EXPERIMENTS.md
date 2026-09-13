@@ -1390,7 +1390,7 @@ Stuff的mix状态预设新Route的结果。泛化成立与否最终以目标数�
 实际运行SHA/seed、末段标量、日志与checkpoint路径未提供。停止当前解除CCM上下文
 停止梯度的实现；原Route保留detach=True，不从单次负结果断言所有联合优化均无效。
 
-### 7.25 当前三槽：Stuff-T原Route + 两项独立上下文结构（2026-09-12，config-ready）
+### 7.25 三槽：Stuff-T原Route + 两项独立上下文结构（09-12交付；T已回报42.32，见§7.27）
 
 用户明确指定只占一槽做COCO-Stuff-T Route，另两槽探索新结构。本批不安排额外
 OffSeg或原proto对照训练。§7.23的Stuff-B于09-13回报44.75，Cityscapes-B仍无回报，不重复排入。
@@ -1439,7 +1439,7 @@ Route完整checkpoint当等价恢复；断点恢复使用各自新配置及对�
 非方形特征测试、记忆预热与启用后零残差前向逐值一致、保持上下文停止梯度、
 新增参数有效有限梯度、原两项CE、模型/AdamW恢复下一步逐值一致、推理记忆冻结，
 以及类别重排等变性和局部感受野检查。激活原CCM末层仅为测试夹具，不修改训练初始化。
-骨干/框架接口用既有桩，未跑GPU全模型；三项均无训练结果。按各自best/last与协议
+交付检查时骨干/框架接口用既有桩，未跑GPU全模型；09-13已收到T的42.32，两项ADE仍待回报。按各自best/last与协议
 判读，ADE只有超过48.49才产生正结果；不能在两项失败间比较后声称机制成立。
 
 ### 7.26 Stuff-B Route：44.75（2026-09-13，owner-reported，末次权重独立验证）
@@ -1469,12 +1469,42 @@ best=last@80k，此次44.75按末次权重命令登记。两数据集均为单�
 稳定提升或显著性，也不能把跨数据集重新训练写成零样本域泛化。未读取本次mix等
 标量，不能由旧proto的mix≈0推断Route同样退化为静态ACS。此回报不自动新增训练。
 
+### 7.27 Stuff-T Route：42.32（09-13收到截图；验证发生于2026-09-12）
+
+来源：用户提供日志截图`codex-clipboard-e525ae0a-a64f-41e5-a4d8-e0328e4be325.png`。
+截图顶部目录明确为`offsegccmiacs_protoroute_r4_responsibility_t_stuff164k_80k-512x512`，
+日志为`20260912_164910/20260912_164910.log`。可见09-12 23:21:43验证结束
+`Iter(val) [1250/1250]`，mIoU **42.3200**、aAcc **69.1400**、mAcc **54.7700**；
+随后日志明确记录80,000迭代保存42.3200的best checkpoint。据截图登记为
+**best=last=42.32 @80k，末次验证刷新最佳**，达到配置训练终点；并非完整日志逐段核验。
+
+配置：`local_configs/offseg2/Tiny/offsegccmiacs_protoroute_r4_responsibility_stuff164k_80k-512x512.py`。
+协议：COCO-Stuff164K/T/EfficientFormerV2-S1/171类/512/80k/4卡×batch4，
+配置seed2000199364；交付commit `11d8d98`。实际seed、训练SHA和末段训练标量截图未显示。
+日志相对路径：`work_dirs/offsegccmiacs_protoroute_r4_responsibility_t_stuff164k_80k-512x512/20260912_164910/20260912_164910.log`。
+截图中的绝对服务器路径及best文件名右侧被裁切；按框架命名预期为同work_dir下
+`best_mIoU_iter_80000.pth`，尚未独立检查文件存在或加载。
+
+| COCO-Stuff规模 | 本地OffSeg | 无记忆方法 | 原proto | Route | Route vs OffSeg | Route vs 无记忆 |
+|---|---:|---:|---:|---:|---:|---:|
+| T / S1 | 41.66 | 42.08 | 未测 | **42.32** | **+0.66** | **+0.24** |
+| B / S2 | 44.26 | 44.33 | 44.59 | **44.75** | **+0.49** | **+0.42** |
+
+事实：完整Route在Stuff的T/B两档均高于已报告本地基线和无记忆方法，支持方法在此
+数据集跨规模使用。T缺少原proto结果，+0.24是记忆及路由接入的整体差，不能说成
+Route单独相对proto的增量；B的相应整体差为+0.42，纯route接入比较为+0.16。
+不把T的+0.24与B的+0.16直接比较后推断“小模型更依赖路由或记忆”。历史T对照seed
+未核验，两档均为单次训练，不能宣称统计稳定性。保留原Route主模型；当前仅
+Cityscapes-B、ADE-spatial、ADE-relation尚待回报，此次不自动增加训练。
+
 ## 8. 尚缺的关键证据
+
+- §7.27 Stuff-T Route完整日志、实际seed/SHA和末段标量；截图已确认42.32及80k best更新；
 
 - §7.26 Stuff-B Route验证日志、实际80k权重元数据/seed/训练SHA、此前best和末段标量；
 
 - §7.24 Route-grad的best/last、完成状态、实际seed/SHA、日志与checkpoint路径；
-- §7.23 Cityscapes-B与§7.25三项的训练结果，Tiny历史对照seed与统一成本测量；
+- §7.23 Cityscapes-B与§7.25两项ADE结构的训练结果，Tiny历史对照seed与统一成本测量；
 
 - §7.21 classmix/r8的best/last、完成状态、实际seed/SHA、关键标量及日志/checkpoint路径尚未核验；
 
