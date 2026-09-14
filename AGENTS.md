@@ -40,7 +40,26 @@ server synchronization commands, and one training command per slot in the famili
 two slots. Keep each experiment's work directory distinct. Do not replace this delivery with
 an archive alone. Do not execute destructive server synchronization without authorization.
 
+Owner preferences updated on 2026-09-13:
+- New training config filenames and work directory names must explicitly include `_b_`
+  or `_t_`, based on the actual backbone: B = EfficientFormerV2-S2, T = S1.
+  A Base/Tiny parent directory alone is not enough. Preserve existing run paths unless
+  the owner requests migration, so checkpoint evaluation and recovery remain usable.
+- Record result-only updates locally. Include them in the next code-related commit/push;
+  do not commit or push separately for each experiment result. Training-code delivery
+  retains the standing push authorization above.
+
 ## Inference rules learned the hard way
+
+Owner preferences updated on 2026-09-15:
+- Do not schedule repeated/multiple seeds unless the owner explicitly changes this preference.
+  Prioritize new structures; retain single-run/best labels, never imply measured stability.
+- Default cluster delivery is now independent Slurm jobs: one experiment per 4-GPU/48-hour
+  allocation on mcml-hgx-a100-80x4 with qos mcml. Use tools/slurm/submit.py; never put several
+  full trainings sequentially into one 48-hour job. Use dynamic rendezvous ports and isolate
+  source snapshots, checkpoints and logs. This supersedes the manual PORT command default.
+- A batch request is not permission to revive previously rejected seed repeats. Code delivery
+  still includes a scoped commit/push without another confirmation.
 
 These were each violated once in this repository and cost a full training slot or a
 retraction. They are not general advice; they are specific to how this project fails.

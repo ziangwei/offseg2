@@ -1,6 +1,13 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-09-13
+> 最后更新：2026-09-15
+>
+> **09-15新交付：独立Slurm队列，每项4卡/48小时。** Relation、Dispersion、Recollect
+> 三项ADE结构，加City-B OffSeg和Stuff-T Proto两个泛化对照，均为config-ready。
+> 用户明确不跑多种子，原拟seed2026/3407四项已撤销；不得在后续自动恢复。
+> 新结构分别补竞争类别分散信息、当前图片的类别外观，均只改CCM上下文，各加16896
+> 参数，保留原Route其余机制；未实测收益。端口自动分配，代码快照、日志、权重隔离。
+> 命令见tools/slurm/README.md，事实/验证/边界见EXPERIMENTS.md §7.30。
 >
 > **ADE20K 当前最高：proto-route 48.49**（09-09日志核验，best=last @160k，20次验证）。
 > best口径为 `+0.37 vs 原 proto 48.12`、`+0.70 vs 无记忆 47.79`；实际seed1370346084。
@@ -92,15 +99,15 @@
 > 和完成状态待核验。停止此次解除CCM上下文停止梯度的实现，原Route保留detach=True。
 > 不组合进泛化或新结构，不由单次负结果推断所有联合优化无效。详见§7.24。
 >
-> **09-12交付两槽泛化（Stuff-B已回报44.75；Cityscapes-B待回报）**：原Route/S2分别在Stuff164K-B与Cityscapes-B
+> **09-12交付两槽泛化（Stuff-B44.75；Cityscapes-B最佳80.69）**：原Route/S2分别在Stuff164K-B与Cityscapes-B
 > 重新训练；Stuff171类/512/80k/总batch16/seed2000199364，对照原proto44.59；City19类/
 > 1024/160k/总batch8/seed1370346084，尚缺本地OffSeg配对结果。两者保留原Route设置，
 > 不混入Route-grad，从骨干预训练初始化、在目标数据集重建记忆，非ADE权重零样本测试。
 > 端口29502/29503，具体配置、对照缺口和验证见EXPERIMENTS.md §7.23。
 >
-> **09-12交付三槽：Stuff-T原Route已回报42.32；ADE Route-spatial / Route-relation待回报。**
+> **09-12交付三槽：Stuff-T原Route42.32；ADE Route-spatial47.50；Route-relation待回报。**
 > 用户指定一槽泛化、两槽结构探索，不新增基线或原proto对照训练；Stuff-B已回报44.75，
-> Cityscapes-B待回报。Tiny用S1/171类/512/80k/seed2000199364；两结构独立基于S2/ADE48.49，
+> Cityscapes-B已回报最佳80.69。Tiny用S1/171类/512/80k/seed2000199364；两结构独立基于S2/ADE48.49，
 > 用原160k/seed1370346084。Spatial在CCM前加入邻域竞争上下文，Relation在类别中心
 > 间做自注意力后补充像素上下文；均为零初始化残差，分别新增2304/33280参数。
 > 原记忆、路由概率、评分中心、IACS与两项CE保持；都是未验证假设，不把常规算子当原创。
@@ -118,7 +125,10 @@
 > 完成1250/1250验证并在80k刷新best；aAcc69.14、mAcc54.77。相对本地OffSeg-T41.66
 > **+0.66**，相对无记忆42.08 **+0.24**。T没有原proto结果，不能分离路由接入的独立增益。
 > Stuff T/B均有完整方法的单次正读数；实际seed/完整日志和统计稳定性仍待核验。
-> 当前待回报：Cityscapes-B、ADE-spatial、ADE-relation。详见EXPERIMENTS.md §7.27。
+> 当前待回报：ADE-relation。最新状态见EXPERIMENTS.md §7.29。
+>
+> **09-13 Cityscapes-B Route最佳80.69**：用户明确回报best，最佳迭代、last、完成状态
+> 与实际日志尚未核验。缺本地OffSeg配对基线，只记录绝对值，不计算相对论文值的增益。
 
 这是本仓库关于研究目标、约束、方法、实验事实和后续工作的**唯一权威入口**。
 新会话应先读本文件，再按需查阅 [EXPERIMENTS.md](EXPERIMENTS.md) 和代码。
@@ -158,6 +168,15 @@ Responsibility：用跨类竞争后的像素责任度估计该二阶几何
 
 ### 当前证据
 
+09-15转用Slurm独立作业；本批三项结构与两个泛化对照尚无结果。用户不安排多种子
+训练，保留单次最佳读数口径。当前Route48.49仍是已测最高，不由新结构设计预期替换。
+
+09-14 Route-spatial用户回报47.50，相对原Route48.49低0.99，best/last和完成状态待核验。
+停止当前CCM前邻域上下文残差实现的扩展，保留原Route，等待Relation。单次负差不能
+直接归因为边界平滑或邻居噪声，也不否定所有空间结构。配置与缺口见§7.29。
+
+Cityscapes-B Route用户回报最佳80.69，缺本地配对基线及best/last日志，见§7.28。
+
 Stuff-T链条为本地OffSeg41.66 → 无记忆42.08 → **Route42.32**，截图确认80k刷新best。
 Stuff两档完整Route相对本地OffSeg的增量分别为T **+0.66**、B **+0.49**；相对无记忆
 分别为+0.24/+0.42。T未测原proto，不能将+0.24当路由接入单独消融，也不能与B的
@@ -195,12 +214,12 @@ proto_support均值109.2267恒等于128*128/150，不能作证据量变化的诊
 09-10新增classmix47.58/r8 47.77，分别低于48.49达.91/.72；原rank4/共享mix继续保留。
 两项未带来可用增益，不由单次负差反推普遍过拟合或rank4最优，停止对应扩展与组合。
 09-12 Route-grad47.81也低于48.49，保留上下文停止梯度。当前三槽按用户要求为
-Stuff-T原Route及两项ADE新上下文结构；T已回报42.32，空间邻域与类别关系仍未出结果。
+Stuff-T原Route及两项ADE新上下文结构；T已回报42.32，空间邻域47.50，类别关系仍未出结果。
 前者增加局部竞争信息，后者增加类别间消息；不改评分中心、IACS或损失，也不预设收益。
 本环境无 proto 同配置换 seed 的已测差为 `47.79 -> 46.82`，所以 48.12 的 `+0.33`
 目前只能写成单次 best 读数；§7.6 的 proto @ seed2026 已由用户撤销，不列入当前三槽位。
 尚未完成 Params/FLOPs/延迟
-测量与 Cityscapes 验证。当前可以称"达到目标的主模型"，不能称"稳定提升"或
+测量与 Cityscapes 配对基线核验（Route已回报best80.69）。当前可以称"达到目标的主模型"，不能称"稳定提升"或
 "同参数档 SOTA"。
 
 新回报 48.49 在数值上比本地历史 PARSeg3 try1 48.17 高 0.32，比师兄报告 48.84 低 0.35。
@@ -272,7 +291,7 @@ FLOPs 未测前也不能宣称 Pareto 更优。
 - mmsegmentation / MMEngine；
 - AdamW，base LR `6e-5`、weight decay `0.01`，decode head `lr_mult=10`；
 - 当前配置每 8000 iterations 验证和保存；
-- 一次完整训练约 24 h，Slurm 单作业 36 h 硬墙。
+- 历史一次完整训练约24h；09-15新Slurm配置每个实验独立申请48h，超时可完整续跑。
 
 ### 4.2 COCO-Stuff164K
 
@@ -862,10 +881,17 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 
 ## 14. 完成论文证据链前必须补齐
 
+2026-09-15：新排期以§7.30为准，三项结构、两个泛化对照均config-ready，尚未实际
+向LRZ提交。用户明确撤销多种子重复训练；此项作为未测范围说明，不作为当前排期。
+新结构的best/last、成本和运行日志待补；Slurm服务器端执行验证待首个实际作业。
+
+2026-09-14新增：Route-spatial47.50的best/last、对应迭代、完成状态、实际seed/SHA、
+末段标量及日志/checkpoint路径仍缺。当前仅Relation未回报，新结果仅记录本地。
+
 2026-09-12新增：Route-grad47.81的best/last、完成状态与实际运行日志待核验；
 Stuff-B于09-13回报44.75，待补评估日志、实际权重迭代/seed/SHA、此前best和末段统计；
 Stuff-T截图已确认42.32/80k最佳，完整日志、实际seed/SHA及末段标量仍缺；
-Cityscapes-B及两项ADE新结构无结果。Tiny历史对照seed和
+Cityscapes-B已回报best80.69，待补最佳迭代、last、完成状态及日志；ADE-spatial47.50，Relation未回报。Tiny历史对照seed和
 新模块全模型计算成本未核验。此处证据缺口不代表新增训练排期，当前三槽见§7.25。
 
 2026-09-10新增：classmix47.58/r8 47.77的best/last、对应迭代、完成状态、实际seed/SHA、
@@ -885,8 +911,7 @@ Cityscapes-B及两项ADE新结构无结果。Tiny历史对照seed和
 
 1. 读出 ADE response-conv 与 residual Gather–Excite 的最终结果；
 2. 在同一环境跑 OffSeg-B 配对基线，停止使用“取低基线”做法；
-3. 对 48.12 主模型至少补多 seed 或一次独立复跑，报告均值/方差（已排入 §7.6
-   第 3 发，与已有的 seed 2026 = 46.82 构成配对差）；
+3. 跨种子稳定性未测；§7.6复跑已撤销，09-15用户再次明确不跑多种子，当前不排此项；
 4. 用同一工具统计全模型 Params、FLOPs，并测同硬件 latency/吞吐；
 5. 若 Stuff T/B 有正结果，补对应本环境 OffSeg T/B 配对基线；
 6. ~~去-CCM 控制~~ **已完成（46.93，-0.86）**；CCM 作为核心组成现在有配对证据。

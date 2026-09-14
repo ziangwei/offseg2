@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-09-12
+> 最后更新：2026-09-14
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -1439,7 +1439,7 @@ Route完整checkpoint当等价恢复；断点恢复使用各自新配置及对�
 非方形特征测试、记忆预热与启用后零残差前向逐值一致、保持上下文停止梯度、
 新增参数有效有限梯度、原两项CE、模型/AdamW恢复下一步逐值一致、推理记忆冻结，
 以及类别重排等变性和局部感受野检查。激活原CCM末层仅为测试夹具，不修改训练初始化。
-交付检查时骨干/框架接口用既有桩，未跑GPU全模型；09-13已收到T的42.32，两项ADE仍待回报。按各自best/last与协议
+交付检查时骨干/框架接口用既有桩，未跑GPU全模型；T已回报42.32，09-14 Spatial回报47.50，Relation待回报。按各自best/last与协议
 判读，ADE只有超过48.49才产生正结果；不能在两项失败间比较后声称机制成立。
 
 ### 7.26 Stuff-B Route：44.75（2026-09-13，owner-reported，末次权重独立验证）
@@ -1497,14 +1497,100 @@ Route单独相对proto的增量；B的相应整体差为+0.42，纯route接入�
 未核验，两档均为单次训练，不能宣称统计稳定性。保留原Route主模型；当前仅
 Cityscapes-B、ADE-spatial、ADE-relation尚待回报，此次不自动增加训练。
 
+### 7.28 Cityscapes-B Route：best 80.69（2026-09-13，owner-reported）
+
+用户在更新本周PPT时明确回报`protoroute_r4_responsibility_cityscapes_160k最好是80.69`。
+登记为**best 80.69**，最佳迭代、last和是否完成160k未提供，不将配置预算当作已核验完成。
+配置：`local_configs/offseg2/Base/offsegccmiacs_protoroute_r4_responsibility_cityscapes_160k-1024x1024.py`。
+协议为S2/19类/1024裁剪/160k/4卡×batch2，配置seed1370346084，交付commit `de4aed6`。
+实际seed、训练SHA、日志、最佳checkpoint具体文件名和末段标量均待提供。配置work_dir为
+`work_dirs/offsegccmiacs_protoroute_r4_responsibility_cityscapes_160k-1024x1024`。
+当前缺本地OffSeg配对结果，只记录绝对best，不拿论文80.5算配对增益。保留Route主线，
+目前仅ADE-spatial和ADE-relation两项尚待回报。本次更新实验记录留在本地，随以后代码一起提交推送。
+
+### 7.29 Route-spatial：47.50（2026-09-14，owner-reported）
+
+用户回报“spatial 是 47.5”，对应§7.25的ADE邻域竞争上下文实验。相对原Route48.49
+为**-0.99**，暂按同口径比较；best/last、对应迭代和完成状态尚未提供。
+配置：`local_configs/offseg2/Base/offsegccmiacs_protoroute_spatial_r4_responsibility_ade20k_160k-512x512.py`。
+模型为B / EfficientFormerV2-S2，配置协议ADE20K/512/160k/4卡×batch4/seed1370346084，
+交付commit `11d8d98`。实际seed、训练SHA、末段标量、日志和checkpoint文件尚未核验。
+配置输出目录为`work_dirs/offsegccmiacs_protoroute_spatial_r4_responsibility_ade20k_160k-512x512`。
+
+当前结果不支持在CCM前给竞争上下文增加逐通道3×3邻域残差。停止这一具体实现的扩展，
+不继续搜索卷积核、门控或邻域强度，也不并入原Route。不能把单次负差直接归因为
+边界平滑或邻居噪声，更不能否定所有空间建模。原Route48.49继续保留，Relation仍待回报。
+仅更新本地记录，不为本次结果单独提交或push。
+
+### 7.30 独立 Slurm 作业与两项新结构（2026-09-15，config-ready）
+
+用户要求迁移到 LRZ 排队：每个实验各自4张A100/48小时，端口、代码、日志与权重
+隔离，交付后push。随后明确撤销多种子训练，优先尝试新结构。原先拟定的
+seed2026/3407四项重复实验已从本次交付删除；不申请、不保留在批量菜单中。
+单次最佳读数仍按单次记录，未增加稳定性证据。
+
+本批五项独立作业，尚未在本机实际向LRZ提交；job ID和真实训练SHA由服务器
+`run.json`登记。结果、best/last、末段统计均未知：
+
+| ID | config（local_configs/offseg2/ 下） | 方法/正确对照 |
+|---|---|---|
+| relation_b_ade | Base/offsegccmiacs_protoroute_relation_b_r4_responsibility_ade20k_160k-512x512.py | 原Relation补B命名；对照Route48.49 |
+| dispersion_b_ade | Base/offsegccmiacs_protoroute_dispersion_b_r4_responsibility_ade20k_160k-512x512.py | 竞争类别分散度；对照Route48.49 |
+| recollect_b_ade | Base/offsegccmiacs_protoroute_recollect_b_r4_responsibility_ade20k_160k-512x512.py | 图内软类别汇聚上下文；对照Route48.49 |
+| offseg_b_city | Base/offseg_b_cityscapes_160k-1024x1024_control.py | 本地OffSeg-B，补City Route best80.69的对照 |
+| proto_t_stuff | Tiny/offsegccmiacs_proto_t_r4_responsibility_stuff164k_80k-512x512.py | 原Proto-T，补Stuff Route42.32的直接对照 |
+
+当前扩大批量需求重新包含两项未测泛化对照，区别于§7.25当时限定的三槽；不恢复
+此前已关闭的参数搜索与失败变体。三个ADE结构固定S2/512/160k/总batch16/
+seed1370346084；City为S2/1024/160k/总batch8/同seed；Stuff为S1/512/80k/
+总batch16/seed2000199364。配置从骨干预训练开始；旧Relation可显式选择完整断点续跑。
+
+**Dispersion假设：** 原CCM只把候选中心加权成一个均值z，不同竞争组合可能具有
+相同/相近均值。对融合中心做LayerNorm和256→32投影，以原nucleus路由概率计算
+逐方向方差 `E[v²]−E[v]²`，非负截断后取log1p，经零初始化32→256投影补到z。
+这是同像素的类间竞争几何，不是IACS的单类像素残差统计，不改记忆或二次评分。
+方差是常规数学工具；“均值之外的信息能提升CCM”尚未被实验验证。
+
+**Recollect假设：** 融合中心提供跨图参考，但CCM上下文可能还受益于当前图像的
+类别外观。用融合中心产生的完整softmax后验，在每类的像素间归一化后汇聚当前F，
+对所得类别描述子做LayerNorm、256→32投影，再由原nucleus路由概率分发回像素，
+经零初始化32→256投影补到z。统计读取F.detach，不削减汇聚像素，主特征路径继续
+训练。该方法参考OCR的软区域汇聚/分发思想，不声称发明对象上下文或注意力：
+[OCR, ECCV2020](https://www.ecva.net/papers/eccv_2020/papers_ECCV/html/5021_ECCV_2020_paper.php)。
+它只改CCM条件信息，不改本图中心、原型库写入、支撑度或最终评分中心。
+
+两项各新增**16896参数**，独立继承原Route；保留rank4/IACS、原stage-1与final CE、
+上下文detach、原EMA及n0，不新增损失。初始公共权重下逐值等于原Route，但零初始化
+不保证训练有益。与Spatial的邻域卷积、已失败的RGE/IACS响应变换不同；不从这些
+失败反推本轮必然成功。风险分别是分散量无判别增量、软汇聚反馈错误预测或增加冗余。
+读 `acc_route_evidence`、`acc_route_context_ratio`、原Route/IACS标量及完整best/last。
+前者仅表示证据幅度，后者表示新增上下文的相对范数；二者不等于准确率或收益。
+优先以是否超过48.49判断结构价值，未跑前不预测具体mIoU。
+
+调度入口 `tools/slurm/submit.py`：relation / new / structures / evidence / all。
+每项单独sbatch，单节点1task→torchrun4进程，c10d localhost:0动态端口、job ID区分
+进程组。每次提交独立 `work_dirs/slurm_runs/<批次>/<ID>/{source,logs,checkpoints}`，
+代码取提交时git HEAD快照；数据/预训练权重链接共享，环境固定为记录的offseg_new2。
+resume/eval单独入口保留快照；历史相对checkpoint路径解析成绝对路径再完整恢复。
+具体提交、查看、续跑和仅末次评估命令见 `tools/slurm/README.md`。
+
+验证：真实头代码CPU数值/零初始化一致性/证据计算显式对照/梯度/两项CE/优化器恢复/
+推理记忆冻结通过；真实MMEngine解析五项配置并核对协议；模拟调度器检查五次独立
+提交、目录隔离、重复作业拒绝、resume/eval与Bash语法通过。骨干和框架接口用桩；
+未在本地运行GPU骨干、FreqFusion编译算子或真实LRZ调度。成本与服务器端结果待测。
+
 ## 8. 尚缺的关键证据
+
+- §7.29 Route-spatial的best/last、对应迭代、完成状态、实际seed/SHA与日志/checkpoint；
+
+- §7.28 Cityscapes-B的best对应迭代、last、完成状态、实际seed/SHA及日志/checkpoint；
 
 - §7.27 Stuff-T Route完整日志、实际seed/SHA和末段标量；截图已确认42.32及80k best更新；
 
 - §7.26 Stuff-B Route验证日志、实际80k权重元数据/seed/训练SHA、此前best和末段标量；
 
 - §7.24 Route-grad的best/last、完成状态、实际seed/SHA、日志与checkpoint路径；
-- §7.23 Cityscapes-B与§7.25两项ADE结构的训练结果，Tiny历史对照seed与统一成本测量；
+- §7.25 ADE-relation的训练结果，Tiny历史对照seed与统一成本测量；
 
 - §7.21 classmix/r8的best/last、完成状态、实际seed/SHA、关键标量及日志/checkpoint路径尚未核验；
 

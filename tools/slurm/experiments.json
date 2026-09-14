@@ -1,0 +1,27 @@
+{
+  "relation_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_relation_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/relation_b_ade.slurm",
+    "seed": 1370346084
+  },
+  "offseg_b_city": {
+    "config": "local_configs/offseg2/Base/offseg_b_cityscapes_160k-1024x1024_control.py",
+    "script": "tools/slurm/offseg_b_city.slurm",
+    "seed": 1370346084
+  },
+  "proto_t_stuff": {
+    "config": "local_configs/offseg2/Tiny/offsegccmiacs_proto_t_r4_responsibility_stuff164k_80k-512x512.py",
+    "script": "tools/slurm/proto_t_stuff.slurm",
+    "seed": 2000199364
+  },
+  "dispersion_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_dispersion_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/dispersion_b_ade.slurm",
+    "seed": 1370346084
+  },
+  "recollect_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_recollect_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/recollect_b_ade.slurm",
+    "seed": 1370346084
+  }
+}

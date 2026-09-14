@@ -1,0 +1,2 @@
+tools/slurm/*.sh text eol=lf
+tools/slurm/*.slurm text eol=lf
