@@ -1,4 +1,41 @@
 {
+  "textmetric_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_textmetric_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/textmetric_b_ade.slurm",
+    "seed": 1370346084,
+    "assets": ["assets/text_anchors/ade20k_clip_vitb32_desc6.pt"]
+  },
+  "textsubspace_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_textsubspace_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/textsubspace_b_ade.slurm",
+    "seed": 1370346084,
+    "assets": ["assets/text_anchors/ade20k_clip_vitb32_desc6.pt"]
+  },
+  "modebank_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_modebank_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/modebank_b_ade.slurm",
+    "seed": 1370346084
+  },
+  "centretilt_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_centretilt_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/centretilt_b_ade.slurm",
+    "seed": 1370346084
+  },
+  "blockmetric_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_blockmetric_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/blockmetric_b_ade.slurm",
+    "seed": 1370346084
+  },
+  "contrastmetric_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_contrastmetric_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/contrastmetric_b_ade.slurm",
+    "seed": 1370346084
+  },
+  "softenergy_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_softenergy_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/softenergy_b_ade.slurm",
+    "seed": 1370346084
+  },
   "relation_b_ade": {
     "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_relation_b_r4_responsibility_ade20k_160k-512x512.py",
     "script": "tools/slurm/relation_b_ade.slurm",

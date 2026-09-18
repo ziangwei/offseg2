@@ -47,7 +47,8 @@ def configs():
     assert city['model']['decode_head']['type'] == 'OffSegHead'
     assert city['train_dataloader']['batch_size'] == 2
     dirs = set()
-    for item in submit.CATALOG.values():
+    for name in submit.ROUND1:
+        item = submit.CATALOG[name]
         cfg = read(item['config'])
         assert cfg['randomness']['seed'] == item['seed']
         assert cfg['load_from'] is None and cfg['resume'] is False
@@ -78,6 +79,7 @@ def scheduler():
         calls.append(args)
         return str(100 + len(calls))
     original_snapshot = submit.snapshot
+    original_freeze = submit.freeze_assets
     def snapshot(data, dest):
         # No dataset assets are necessary for this scheduler-only fixture.
         return original_snapshot(data, dest, repo=temp)
@@ -85,15 +87,35 @@ def scheduler():
         with patch.object(sys, 'argv', ['submit.py', *args]), contextlib.redirect_stdout(io.StringIO()):
             submit.main()
     with patch.object(submit, 'command', command), patch.object(submit, 'snapshot', snapshot), \
+         patch.object(submit, 'ROOT', temp), \
+         patch.object(submit, 'freeze_assets', lambda meta: original_freeze(meta, repo=temp)), \
          patch.object(submit.subprocess, 'check_output', return_value=archive.getvalue()):
         run('all', '--runs-root', str(temp), '--dry-run')
         assert not calls and not list(temp.glob('*/run.json'))
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                run('text2', '--runs-root', str(temp))
+            raise AssertionError('Missing text asset accepted')
+        except SystemExit as exc:
+            assert exc.code == 2
+        assert not calls
+        # Fixture only inside the temporary repository, never a real text asset.
+        for name in {a for v in submit.CATALOG.values() for a in v.get('assets', [])}:
+            asset = temp / name
+            asset.parent.mkdir(parents=True, exist_ok=True)
+            asset.write_bytes(b'frozen asset fixture')
         run('all', '--runs-root', str(temp))
-        assert len(calls) == 5
-        assert len({next(a for a in c if a.startswith('--chdir=')) for c in calls}) == 5
-        assert len({c[c.index('--work-dir') + 1] for c in calls}) == 5
+        assert len(calls) == 7
+        assert len({next(a for a in c if a.startswith('--chdir=')) for c in calls}) == 7
+        assert len({c[c.index('--work-dir') + 1] for c in calls}) == 7
         records = list(temp.glob('*/*/run.json'))
-        assert len(records) == 5
+        assert len(records) == 7
+        for record in records:
+            item = json.loads(record.read_text())
+            for name, digest in item.get('asset_sha256', {}).items():
+                frozen_asset = record.parent / 'source' / name
+                assert frozen_asset.read_bytes() == b'frozen asset fixture'
+                assert len(digest) == 64 and not frozen_asset.is_symlink()
         run_dir = records[0].parent
         meta = json.loads(records[0].read_text())
         frozen = run_dir / 'source' / meta['config']
@@ -111,7 +133,7 @@ def scheduler():
             raise AssertionError('Duplicate active job was accepted')
         except SystemExit as exc:
             assert exc.code == 2
-        assert len(calls) == 7
+        assert len(calls) == 9
     bash = Path('C:/Program Files/Git/bin/bash.exe') if sys.platform == 'win32' else Path('/bin/bash')
     for name in ['tools/slurm/run_job.sh'] + [v['script'] for v in submit.CATALOG.values()]:
         text = (ROOT / name).read_text()
@@ -120,7 +142,7 @@ def scheduler():
         if name.endswith('.slurm'):
             for directive in ('--ntasks=1', '--gres=gpu:4', '--time=48:00:00', '--partition=mcml-hgx-a100-80x4'):
                 assert directive in text
-    print('PASS separate sbatch calls/snapshots/logs, duplicate blocking, resume/eval and Bash syntax')
+    print('PASS seven isolated jobs, missing-asset guard, frozen asset hashes, duplicate blocking, resume/eval and Bash syntax')
 
 
 if __name__ == '__main__':

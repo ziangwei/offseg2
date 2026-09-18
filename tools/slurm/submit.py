@@ -5,11 +5,13 @@ Stdlib only: run this on the LRZ login node, not on an allocated GPU node.
 import argparse
 from datetime import datetime
 import getpass
+import hashlib
 import io
 import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import uuid
 import zipfile
@@ -17,6 +19,12 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = json.loads((Path(__file__).with_name('experiments.json')).read_text())
 DEFAULT_CONDA = '/dss/dssmcmlfs01/pn39qo/pn39qo-dss-0000/di97fer/miniconda3'
+VISUAL2 = ['modebank_b_ade', 'centretilt_b_ade', 'blockmetric_b_ade',
+           'contrastmetric_b_ade', 'softenergy_b_ade']
+TEXT2 = ['textmetric_b_ade', 'textsubspace_b_ade']
+ROUND2 = VISUAL2 + TEXT2
+ROUND1 = ['relation_b_ade', 'dispersion_b_ade', 'recollect_b_ade',
+          'offseg_b_city', 'proto_t_stuff']
 
 
 def command(args, cwd=ROOT):
@@ -24,14 +32,16 @@ def command(args, cwd=ROOT):
 
 
 def select_jobs(selection):
-    if selection == 'all':
-        return list(CATALOG)
+    if selection in ('round2', 'all', 'new', 'structures'):
+        return list(ROUND2)
+    if selection == 'round1':
+        return list(ROUND1)
+    if selection == 'visual2':
+        return list(VISUAL2)
+    if selection == 'text2':
+        return list(TEXT2)
     if selection == 'evidence':
         return ['offseg_b_city', 'proto_t_stuff']
-    if selection == 'structures':
-        return ['relation_b_ade', 'dispersion_b_ade', 'recollect_b_ade']
-    if selection == 'new':
-        return ['dispersion_b_ade', 'recollect_b_ade']
     if selection == 'relation':
         return ['relation_b_ade']
     if selection in CATALOG:
@@ -77,15 +87,29 @@ def save(meta):
     temp.replace(path)
 
 
+def freeze_assets(meta, repo=ROOT):
+    """Copy small untracked constants; never link text to mutable source data."""
+    hashes = {}
+    for name in meta.get('assets', []):
+        source = (repo / name).resolve()
+        if repo.resolve() not in source.parents:
+            raise ValueError('Asset must be inside repository: ' + name)
+        dest = Path(meta['run_dir']) / 'source' / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, dest)
+        hashes[name] = hashlib.sha256(dest.read_bytes()).hexdigest()
+    meta['asset_sha256'] = hashes
+
+
 def active_names():
-    return set(command(['squeue', '--noheader', '--user', getpass.getuser(),
-                        '--format=%j']).splitlines())
+    return {name.strip() for name in command(
+        ['squeue', '--noheader', '--user', getpass.getuser(), '--format=%.200j']).splitlines()}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('selection', nargs='?', default='relation',
-                        help='relation, new (two), structures (three), evidence (two), all (five), or exact experiment ID')
+    parser.add_argument('selection', nargs='?', default='round2',
+                        help='round2/all/new/structures (current seven), visual2 (five), text2 (two), round1 (historical five), or exact experiment ID')
     parser.add_argument('--dry-run', action='store_true', help='Print commands without submitting or writing snapshots')
     parser.add_argument('--runs-root', type=Path, default=ROOT / 'work_dirs/slurm_runs')
     modes = parser.add_mutually_exclusive_group()
@@ -136,6 +160,11 @@ def main():
     if duplicate:
         parser.error('Already pending/running: ' + ', '.join(duplicate))
     if not existing:
+        required = {name for meta in prepared for name in meta.get('assets', [])}
+        missing = [name for name in sorted(required) if not (ROOT / name).is_file()]
+        if missing:
+            parser.error('Missing frozen text asset: ' + ', '.join(missing) +
+                         '. Restore the old TAM asset or run tools/gen_text_descriptions.py in offseg_new2 first; visual2 needs no text asset.')
         archive = subprocess.check_output(['git', 'archive', '--format=zip', sha], cwd=str(ROOT))
         with zipfile.ZipFile(io.BytesIO(archive)) as z:
             for meta in prepared:
@@ -145,6 +174,7 @@ def main():
         for meta in prepared:
             run = Path(meta['run_dir'])
             snapshot(archive, run / 'source')
+            freeze_assets(meta)
             (run / 'logs').mkdir()
             if not args.resume_work_dir:
                 Path(meta['work_dir']).mkdir()

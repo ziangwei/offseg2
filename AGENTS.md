@@ -61,6 +61,15 @@ Owner preferences updated on 2026-09-15:
 - A batch request is not permission to revive previously rejected seed repeats. Code delivery
   still includes a scoped commit/push without another confirmation.
 
+Owner preferences updated on 2026-09-18:
+- The owner expanded the new-method batch to seven arms, including reuse of frozen text
+  descriptions. This explicitly permits an external-text extension alongside the visual-only
+  Route; retain separate protocol labels. Do not run a text encoder online or import PARSeg's
+  attribute branch. The pure-vision comparison remains pure vision.
+- Do not schedule shuffled-text/no-text semantic-attribution controls: the owner declined that
+  use of a GPU slot. Record the unmeasured attribution limit without turning it into a queue.
+- Round 2 IDs/groups and frozen text asset handling are documented in tools/slurm/README.md.
+
 These were each violated once in this repository and cost a full training slot or a
 retraction. They are not general advice; they are specific to how this project fails.
 

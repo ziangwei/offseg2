@@ -1,10 +1,81 @@
 # LRZ：每个实验独立排队
 
+## 当前批次：2026-09-18 Round 2
+
+首批五项已回报：Relation47.61、Dispersion47.59、Recollect46.32、City-B OffSeg79.71、
+Stuff-T Proto42.16，均为用户提供的best汇总。前三项停止扩展；新的七项全部独立基于
+原Route48.49，ADE/S2/512/160k/总batch16/seed1370346084，不组合、不重复种子。
+
+```bash
+cd /dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2
+git pull --ff-only origin main
+# 两项文本实验需要旧TAM的描述向量；不是只有类名的ade20k_clip_vitb32.pt。
+test -s assets/text_anchors/ade20k_clip_vitb32_desc6.pt
+python3 tools/slurm/submit.py round2
+squeue --me
+```
+
+`round2` 会发出七次独立sbatch，每项4卡/48小时，动态端口、独立代码快照和目录。
+`all`、`new`、`structures`和不带参数的提交入口现均指向本轮七项，**不混入首批实验**。
+只提交纯视觉五项用 `visual2`，只提交文本两项用 `text2`；与round2择一，不要重复。
+历史五项只通过 `round1` 或准确ID访问；旧任务resume/eval仍使用原run.json和快照。
+现有单项 `relation` / `evidence` 保留兼容，不属于本轮命令。
+
+| 单项ID | 唯一干预 | 新增可训练参数 | 主要风险 |
+|---|---|---:|---|
+| modebank_b_ade | 每类两个跨图中心模式，按本图中心选择记忆参考 | 0 | 模式坍缩或选错；原单中心保留兜底 |
+| centretilt_b_ade | 融合中心决定rank4子空间向原空间外的偏转 | 600 | 图像条件方向不稳定；保留rank4 |
+| blockmetric_b_ade | CCM的64维低秩变换从逐通道缩放扩为8通道组内交互 | 57792 | 组内自由度没有有效增益；不加rank/深度 |
+| contrastmetric_b_ade | CCM变换作用于像素减去竞争中心的差异 | 0 | 原有绝对特征变换可能更合适 |
+| softenergy_b_ade | 非线性压缩极端二次加分，同时保留各类责任度加权平均加分 | 0 | 可能削弱原先有用的大残差响应 |
+| textmetric_b_ade | 用冻结文本描述生成最终中心匹配的逐类通道权重 | 169472 | 外部语义/参数化不一定适合当前视觉特征 |
+| textsubspace_b_ade | 文本描述经共享小网络补充每类rank4残差基 | 49152 | 语义关系未必符合视觉残差几何 |
+
+用户明确不排文本打乱或去文本归因对照，本轮没有该实验，也没有多种子。
+文本两项属于**使用外部语义信息的扩展**，与纯视觉方法单列；不运行在线文本编码器，
+不搬PARSeg属性分支、不加损失，不能仅凭提升证明语言内容的独立贡献。
+
+若描述文件还在，直接复用；本地只有类名向量，不能据此断言服务器描述文件仍在。
+若文件确实丢失，用仓库原脚本在已有训练环境离线生成一次（需要transformers和模型
+缓存或可下载CLIP文本编码器），不需要GPU：
+
+```bash
+source /dss/dssmcmlfs01/pn39qo/pn39qo-dss-0000/di97fer/miniconda3/etc/profile.d/conda.sh
+conda activate offseg_new2
+python tools/gen_text_descriptions.py --device cpu
+```
+
+提交器在缺文件时会在任何sbatch之前拒绝整个含文本批次，避免占卡后才发现缺资产。
+文本文件作为约1.9MB的小常量单独复制进各文本作业快照，SHA256写入run.json；训练
+加载时检查[150,6,512]形状、有限值和ADE类别顺序，不会用类名向量或随机向量代替。
+
+一次提交后不用再逐项提交。若只跑某一项：
+
+```bash
+python3 tools/slurm/submit.py modebank_b_ade
+```
+
+所有配置文件及独立slurm文件均带B标记。每个实验仍保留最近2个普通checkpoint和
+1个best，末次权重包含在普通checkpoint中；batch大小、验证频率、优化器和两项CE
+不变。双模式库新增76800个浮点中心元素及300个计数，原单中心库作为未初始化兜底；
+不是额外监督头，不增加可训练属性查询。七项都增加或改变计算，0参数不表示0开销。
+
+训练后一次读出本轮七项结果（包含最佳文件是否仍存在）：
+
+```bash
+python3 tools/slurm/results.py round2
+```
+
+上一批结果用 `python3 tools/slurm/results.py round1`。同ID有多个提交时取最新提交
+目录，结果从日志流式读取，不加载checkpoint；没有记录或文件会明确标注。
+本轮状态为config-ready，未在本机向LRZ提交或运行GPU。详细公式、验证和来源见
+EXPERIMENTS.md §7.31–7.32；下文为首批交付历史与通用恢复说明。
+
 每个 `.slurm` 文件只运行一个实验：**单节点、4 张 A100、48 小时**，partition
 `mcml-hgx-a100-80x4`，qos `mcml`。批量入口逐个调用 `sbatch`，不会在一份
 48 小时申请里串行训练多个模型。实际启动时间/并发数由配额和调度器决定。
 
-## 登录节点提交
+## 首批历史提交命令（已完成，当前请用上面的round2）
 
 ```bash
 cd /dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2
@@ -22,8 +93,8 @@ python3 tools/slurm/submit.py evidence
 squeue --me
 ```
 
-也可以用 `python3 tools/slurm/submit.py all` 一次提交全部五个独立作业，或用
-`structures` 只提交三项结构。以上两种方式择一，不要重复提交。
+首批菜单已归档为 `round1`。09-18起 `all/new/structures` 均指向第二批七项，
+不要把上述历史new命令当成首批两项的固定别名。
 在命令末加 `--dry-run` 只打印对应的 `sbatch` 命令，不创建目录、不申请资源。
 不要把批量提交脚本本身再放进 `sbatch`，也不需要先 `salloc` 或登录计算节点。
 

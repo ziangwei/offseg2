@@ -1579,6 +1579,135 @@ resume/eval单独入口保留快照；历史相对checkpoint路径解析成绝�
 提交、目录隔离、重复作业拒绝、resume/eval与Bash语法通过。骨干和框架接口用桩；
 未在本地运行GPU骨干、FreqFusion编译算子或真实LRZ调度。成本与服务器端结果待测。
 
+### 7.31 首批Slurm五项完成（2026-09-18，owner-reported best）
+
+用户先确认“五个都训练完了”，随后贴出日志汇总命令的最佳mIoU与迭代结果。
+记录为已完成（用户确认）/best（用户提供汇总）；完整日志、last和实际run.json未读取。
+配置与ID逐项对应§7.30；交付SHA cf29b84，不能替代实际训练SHA。
+
+| ID | best mIoU | best iter | 正确对照 / 差值 |
+|---|---:|---:|---|
+| relation_b_ade | 47.61 | 144000 | Route48.49，-0.88 |
+| dispersion_b_ade | 47.59 | 144000 | Route48.49，-0.90 |
+| recollect_b_ade | 46.32 | 88000 | Route48.49，-2.17 |
+| offseg_b_city | 79.71 | 104000 | Route80.69相对本地OffSeg为+0.98 |
+| proto_t_stuff | 42.16 | 76000 | Route42.32相对Proto为+0.16；Proto相对无记忆42.08为+0.08 |
+
+协议沿用§7.30：ADE结构S2/512/160k/总batch16/seed1370346084；City基线S2/1024/
+160k/总batch8/同seed；Stuff原Proto为S1/512/80k/总batch16/seed2000199364。
+上述为配置seed，实际运行元数据待核验。checkpoint位置为各实际提交批次的
+`work_dirs/slurm_runs/<批次>/<ID>/checkpoints/best_mIoU_iter_<上表iter>.pth`，
+尚无用户实际批次路径；日志在对应checkpoints时间目录和logs/slurm-<jobID>.log。
+终局统计、last、Route City最佳迭代/last，以及真实运行SHA仍缺。
+
+判断：原Route仍是ADE最高48.49。停止Relation/Dispersion/Recollect当前实现，
+不调宽度、不组合、不在47.61与47.59之间读取机制方向。Recollect早期峰值不能单独
+证明过拟合或错误反馈。连同Spatial47.50，当前四种CCM上下文加法均未带来收益。
+这关闭对应加法，不证明任何新上下文都必然无效。
+
+泛化：City获得本地OffSeg对照79.71，Route80.69的单次best增量为+0.98，
+不再用论文80.5相减。Stuff-T形成41.66→42.08→42.16→42.32链条，完整Route相对
+OffSeg为+0.66、相对Proto为+0.16。B的44.75相对Proto44.59也是+0.16，但B为末次
+权重独立评估回报，T为best；不能据此宣称严格等幅效应或跨种子稳定性。
+下一批先设计五项纯视觉方法，随后按用户要求增加两项文本扩展；不恢复重复种子或失败变体调参。
+
+### 7.32 第二批七项：判决结构与冻结文本扩展（2026-09-18，config-ready）
+
+用户先要求五项新实验，后允许七/八项并主动询问旧文本资产；最终七项：五个纯视觉
+结构与两个外部文本扩展。用户明确拒绝语义打乱对照，已从方案和代码删除；不安排
+TAM-NT、随机/打乱文本或多种子。下面都是待测假设，不由过去负结果推出本轮必胜。
+
+七项均独立从原Route48.49配置继承，ADE20K/150类/S2/512/160k/4卡×batch4/
+seed1370346084；原学习率、优化器、数据增强、8k验证、两项CE不变，从骨干预训练
+开始，不加载Route best权重微调。max_keep_ckpts=2、save_best=mIoU、save_last=True。
+所有配置在local_configs/offseg2/Base/，完整文件名为
+`offsegccmiacs_protoroute_<下表kind>_b_r4_responsibility_ade20k_160k-512x512.py`，
+ID为`<kind>_b_ade`，各有同名独立tools/slurm/*.slurm文件。
+
+| kind | 干预位置 | 新增可训练参数 | 正确参照 |
+|---|---|---:|---|
+| modebank | 跨图类别记忆的表示与读取 | 0 | 原Route48.49 |
+| centretilt | rank4残差子空间的方向 | 600 | 原Route48.49 |
+| blockmetric | CCM低秩空间的变换结构 | 57792 | 原Route48.49 |
+| contrastmetric | CCM残差变换的输入参考点 | 0 | 原Route48.49 |
+| softenergy | 最后非负残差加分的形状 | 0 | 原Route48.49 |
+| textmetric | 最终中心匹配的逐类通道度量 | 169472 | Route48.49；单列外部文本信息 |
+| textsubspace | 类残差基的文本辅助参数化 | 49152 | Route48.49；单列外部文本信息 |
+
+**ModeBank：** 每类的图像级E可能不适合压成一个平均值。保留原单中心EMA作为未
+初始化兜底，增加两个无梯度中心模式；首次跨卡收集有效E，用首个和与其余弦距离最远
+的不同样本初始化两个模式，相同样本不会假造第二模式。随后以余弦最近中心分组、
+跨卡归约每组均值、用原0.01更新率EMA。读取时按本图未融合E选择最近模式，再用
+原支撑度lambda融合，4000步warmup、支撑>1写入条件和eval冻结保持。额外76800
+中心浮点数与300计数，原均值库继续更新；不构建标签监督、像素混合高斯或属性槽。
+多个原型/聚类/记忆属于已有方法族，参见
+[GMMSeg, NeurIPS2022](https://proceedings.neurips.cc/paper_files/paper/2022/hash/cb1c4782f159b55380b4584671c4fd88-Abstract-Conference.html)，
+本项是其一般多模式思想在图像级学习中心上的具体假设，不声称复现GMM/EM。
+风险是模式坍缩、早期种子偏置和选错参考；读mode_ready/second/separation。
+
+**CentreTilt：** IACS当前随图变化的是4×4度量，而256维空间中的四维span固定。
+取融合中心在原span外的单位方向v，以逐类4个有界系数tanh(a)将U改成
+`orth(U + v a^T)`；系数零初始化，仍只有rank4，不是增加rank或子空间内等价旋转。
+方向条件读取centres.detach，原主评分保留梯度；每图重算，四维原始矩及责任度不变。
+风险为图像条件span不稳定；读centre_tilt。ACS包装后显式补acs.core.mix_logit的
+lr_mult=10/decay=0，保留原mix优化规则。
+
+**BlockMetric：** 原CCM的64维瓶颈只能逐通道缩放。保留原上下文z、rank64、对角
+gain与一次CCM，在8通道组内增加有界非对角变换；共享原gain生成器的hidden，
+另加128→448零初始化输出，用tanh/sqrt(7)限制系数，最后由同一个up投影写回F。
+这是条件线性变换的一种组内参数化，不是新注意力；不同于失败的rank192/depth3/
+类别上下文加法。风险为无效自由度；读decision_change。零初始化不保证训练收益。
+
+**ContrastMetric：** 原残差为U[g⊙V(F)]，改成U[g⊙V(F−z)]。已有z、g及其生成
+方式完全保留，改变的是变换围绕哪个参考点发生，属于竞争中心条件的仿射变换。
+它不改评分中心或IACS残差参考点，不是Proto-local；也不添加新z。无新增参数；
+未训练CCM的零gain起点相同，已有非零gain权重下不要求等于原Route。风险是绝对
+特征更适合原变换。读decision_change，数值为瓶颈输入变化幅度，不是准确率。
+
+**SoftEnergy：** 保留原IACS得到的非负correction C，用同一责任度a计算每类
+平均t=ΣaC，改成`C'=t*log(1+C/t)/(Σa log(1+C/t))`。统计控制量detach、极小t回退
+原C。它压缩极端响应的相对优势，但保留每类责任度加权平均加分，避免单纯降低
+整体scale。保持全像素统计、不筛样本、不加参数；不是高斯/Student似然，也不是
+已关闭的centered covariance、meanboost或区域金字塔。风险为有用的大残差被削弱；
+读energy_redistribution。其初始评分形状就不同，不宣称零初始化等价。
+
+**TextMetric：** 复用历史TAM的`1+.5*tanh(W t_k+r_k)`正通道权重，t为每类6条
+冻结描述向量的归一化均值；W和r零初始化。只把Route post-CCM的raw匹配改为
+`Fhat (Ebar*w)^T`；原route、支撑、写库、中心和残差坐标保持，新的post-CCM匹配
+自然也会改变IACS责任度。没有搬PARSeg属性头/多路融合，没有新损失。历史TAM
+48.73只能说明这类参数化曾有好读数，不能外推到Route或证明语言本身承重。
+
+**TextSubspace：** 同一冻结描述均值经过512→32→1024共享网络，输出每类256×4
+的基增量，与原raw_basis相加再正交化，末层零初始化。它让类别语义关系参与残差基
+的参数化，不直接把CLIP嵌入当视觉中心，也不施加跨类相似度/对比损失；原自由基仍
+保留。文本不随图像变化，每图IACS统计继续变化；额外49152参数，mix优化路径同
+CentreTilt显式保留。风险为语义和视觉几何不一致；读text_basis_move。
+
+文本两项经用户授权作为原“无外部模型”纯视觉协议之外的独立扩展，必须单列。
+输入为旧TAM的`assets/text_anchors/ade20k_clip_vitb32_desc6.pt`，[150,6,512]，
+每类6条描述文本源和原CLIP编码脚本仍在仓库。当前本地只有[150,512]类名向量，
+不能把它当描述向量替代；服务器描述文件存在性待确认。缺失可在原训练环境用
+`python tools/gen_text_descriptions.py --device cpu`离线生成，需原依赖和模型缓存/
+下载能力；不是把随机测试夹具当资产。提交前检查文件存在，复制进各文本任务快照并
+记录SHA256，模型加载严格核对形状、有限值和ADE类序。训练与推理不运行CLIP编码器，
+但仍使用CLIP衍生外部信息。不安排用户拒绝的归因实验，因此若上涨只能报告“文本
+扩展整体有效”，不能隔离语言语义相对于额外参数化的贡献。
+
+提交入口：round2/all/new/structures/default均为本轮七项；visual2五项，text2两项；
+round1保留首批历史菜单，resume/eval仍读取各自快照。每项独立4卡/48小时、动态
+端口、独立source/logs/checkpoints，继续保留2普通+1best。results.py round2一次
+汇总本轮best/iter并检查best文件存在，不加载权重。未在本机向LRZ提交，不虚构job ID。
+
+验证：七个真实头在CPU上检查数值、两项CE、有效梯度、精确优化器恢复和eval冻结；
+BlockMetric/CentreTilt/两个文本头检查对齐公共权重后的初始输出一致（容许浮点误差）；
+ModeBank显式双模式读写/未观察类别，以及两个gloo进程不等批量的全局初始化和EMA
+归约对照通过；SoftEnergy加权均值守恒与零能量、ContrastMetric显式公式通过。
+文本使用仅在tmp中的合成描述测试；拒绝类名向量和错序资产。真实MMEngine解析七项
+配置核对原协议与checkpoint设置；模拟Slurm核验七个独立作业、缺资产前置拒绝、
+复制资产hash、恢复/仅验证和全部Bash语法。未验证GPU骨干/FreqFusion或实际训练效果。
+
+## 8. 尚缺的关键证据
+
 ## 8. 尚缺的关键证据
 
 - §7.29 Route-spatial的best/last、对应迭代、完成状态、实际seed/SHA与日志/checkpoint；
@@ -1590,7 +1719,8 @@ resume/eval单独入口保留快照；历史相对checkpoint路径解析成绝�
 - §7.26 Stuff-B Route验证日志、实际80k权重元数据/seed/训练SHA、此前best和末段标量；
 
 - §7.24 Route-grad的best/last、完成状态、实际seed/SHA、日志与checkpoint路径；
-- §7.25 ADE-relation的训练结果，Tiny历史对照seed与统一成本测量；
+- §7.31五项的实际运行SHA/seed、last、完整日志与批次路径；best与迭代已由用户汇总补齐；
+- Tiny历史对照seed与统一成本测量；本地City-B OffSeg对照已补79.71，见§7.31；
 
 - §7.21 classmix/r8的best/last、完成状态、实际seed/SHA、关键标量及日志/checkpoint路径尚未核验；
 
