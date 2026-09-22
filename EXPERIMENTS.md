@@ -1706,6 +1706,139 @@ ModeBank显式双模式读写/未观察类别，以及两个gloo进程不等批�
 配置核对原协议与checkpoint设置；模拟Slurm核验七个独立作业、缺资产前置拒绝、
 复制资产hash、恢复/仅验证和全部Bash语法。未验证GPU骨干/FreqFusion或实际训练效果。
 
+### 7.33 第二批七项回报（2026-09-22，owner-reported best）
+
+用户提供 `results.py round2` 格式的七行 best/iteration/Best file 汇总；各项 best 文件
+均报告 yes。未读取服务器原始日志或 run.json，yes 仅代表文件存在，不代表已验证
+权重可加载。best@160k 的四项已记录终点验证；其余三项是否跑到160k、末次分数与
+作业退出状态不能从 best 表判断。本节更新§7.32的待测状态，不改历史设计记录。
+
+| ID | best mIoU | best iter | 相对原Route48.49 | best文件 |
+|---|---:|---:|---:|---|
+| modebank_b_ade | 47.43 | 152000 | -1.06 | yes（用户汇总） |
+| centretilt_b_ade | 47.25 | 160000 | -1.24 | yes（用户汇总） |
+| blockmetric_b_ade | 47.40 | 160000 | -1.09 | yes（用户汇总） |
+| contrastmetric_b_ade | 47.91 | 160000 | -0.58 | yes（用户汇总） |
+| softenergy_b_ade | 47.20 | 144000 | -1.29 | yes（用户汇总） |
+| textmetric_b_ade | 47.62 | 152000 | -0.87 | yes（用户汇总） |
+| textsubspace_b_ade | 47.12 | 160000 | -1.37 | yes（用户汇总） |
+
+完整配置均为 `local_configs/offseg2/Base/` 下
+`offsegccmiacs_protoroute_<kind>_b_r4_responsibility_ade20k_160k-512x512.py`，
+kind依次为modebank/centretilt/blockmetric/contrastmetric/softenergy/textmetric/textsubspace。
+配置协议：ADE20K/150类、EfficientFormerV2-S2、512×512、160k、4卡×batch4、
+seed1370346084，原Route两项CE及8k验证间隔。此为已交付配置，实际运行参数待核验。
+交付SHA为2ab25ed，不冒充实际训练SHA。文本两项仍单列冻结CLIP描述外部信息协议；
+真实资产SHA256尚未读取。没有最后训练标量，不能推断模式坍缩或文本分支失效。
+
+预期checkpoint位置：`work_dirs/slurm_runs/<实际批次>/<ID>/checkpoints/`
+下 `best_mIoU_iter_<表中iter>.pth`；训练日志在该checkpoints的时间子目录，
+调度日志在同级 `logs/slurm-<jobID>.log`。实际批次路径/run.json尚未提供。
+
+结论：七项均未超过48.49；ContrastMetric虽为本批最高，仍低0.58，也低于原Proto
+48.12达0.21，不能由失败变体间排序推出其机制正确。ModeBank未支持本次双模式
+记忆实现；CentreTilt/BlockMetric未支持本次结构增容；SoftEnergy未支持当前能量
+重映射；两个文本接入均无可用增益，不能外推成所有文本语义无用。
+停止七个当前实现的调参、组合及泛化扩展，继续保留原Proto-route为主模型。
+连同§7.31的三项ADE结构，本轮两批共十项均低于Route；这提示需要先核验可比性，
+不证明十项共享同一个失败原因，也不证明Route普遍最优。
+
+下一步建议先做已有日志与快照的只读核对：实际源代码/环境/解析配置、20次验证曲线、
+last与是否完成；再按需读取新增分支幅度及原n0/lambda/IACS mix/scale等末段标量。
+与已保存的原Route日志和诊断比较，不重复索取已交付原始资料。不得把分支非零或
+幅度大等同有效，也不得仅因best@160k而自动延长训练。核验后才决定是否有明确依据
+设计新结构；本次不自动提交训练，不恢复用户拒绝的多种子或文本归因实验。
+按用户偏好，本次仅本地记录，随下次代码变更提交/push。
+
+### 7.34 第二批诊断包核验（2026-09-22，日志摘录/配置/运行元数据）
+
+来源：用户文件 `C:/Users/21138/Downloads/round2_diagnostics_20260922_143215.zip`。
+逐项读取run.json、launch JSON、训练实际展开配置及日志摘录；对照此前已提供的
+`20260904_181612.log`（原Route48.49）。只解析数据，不执行包内配置。两类日志
+可能重复，验证按日志行去重，末段统一取158050–160000的40条训练记录均值。
+解析产物本地 `../tmp/round2_audit/summary.json`；不是新的验证集诊断或权重检查。
+
+七项均有完整20次8k间隔验证和160000/160000训练记录，确认训练及末次验证已完成。
+所有best与§7.33一致；last依次为ModeBank47.17、CentreTilt47.25、BlockMetric47.40、
+ContrastMetric47.91、SoftEnergy46.97、TextMetric47.53、TextSubspace47.12。
+原Route最后四次（136k/144k/152k/160k）为47.89/48.26/48.23/48.49，逐点高于
+七个变体各自同期结果，因此差距不只来自best挑选。摘录中未发现OOM、Traceback、
+超时取消或ChildFailedError；没有Slurm最终记账状态，不能据此宣称作业退出码已核验。
+
+**可比性核验：** 七项run.json记录源码SHA均为
+`2ab25ed9e76a1a698a4720daf596b97ecb87b544`，同一批次`20260918_153723_2a2b24`，
+job ID按§7.33表序为5796860–5796866。各自路径为
+`/dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2/work_dirs/slurm_runs/20260918_153723_2a2b24/<ID>/checkpoints`。
+launch均记录非resume的train、seed1370346084、S2、每卡batch4、4卡、160k。
+与原Route环境日志一致：Python3.9.23、PyTorch2.1.0+cu118、TorchVision0.16.0+cu118、
+MMEngine0.10.7、OpenCV4.12.0、A100-SXM4-80GB×4；deterministic=False、cudnn_benchmark=True。
+展开配置递归比较仅见预期head/import/work_dir差异、两文本资产字段、两子空间包装的
+`acs.core.mix_logit`优化器键（保持lr×10/decay0）；数据处理/学习率/批量/验证/损失/
+原记忆设置均一致。没有发现可解释七项共同下降的已记录协议错误；这不证明硬件驱动、
+数据/预训练文件内容、全部源文件或随机初始化轨迹逐位相同，原Route实际训练SHA仍未知。
+两文本资产记录同一SHA256：
+`03b36089dc6a4387c999d3306d2e9a43958e969739bd1789d988aa3b32c08aa9`。
+这是运行记录中的资产hash，压缩包不含资产本体，未重新计算。
+
+**末段观察（40条记录均值；不是验证集聚合）：**
+
+| 模型 | IACS mix | CCM gain绝对值 | 二次修正绝对值 | 新增观测 |
+|---|---:|---:|---:|---|
+| 原Route | 0.2530 | 0.1944 | 0.2079 | 对照同迭代窗口 |
+| ModeBank | 0.2048 | 0.1918 | 0.1628 | mode_ready=1、mode_second=0.0000、mode_separation=1.0901 |
+| CentreTilt | 0.2465 | 0.1927 | 0.2002 | centre_tilt=0.0644 |
+| BlockMetric | 0.6012 | 0.1430 | 0.2061 | decision_change=0.1053 |
+| ContrastMetric | 0.0342 | 0.0509 | 0.1678 | decision_change=1.1782 |
+| SoftEnergy | 0.0000 | 0.1702 | 0.0745 | energy_redistribution=0.00914 |
+| TextMetric | 0.3388 | 0.1989 | 0.2425 | text_weight_move=0.1649 |
+| TextSubspace | 0.2352 | 0.1968 | 0.1880 | text_basis_move=7.1480 |
+
+ModeBank最明确的异常是**末段第二模式没有可见读取占比**，40条记录均打印0.0000；
+ready只表示两槽曾初始化，不表示都在持续更新。余弦分离非零，不是两槽中心重合。
+代码以余弦最近模式硬读/硬写且没有死槽恢复，因此“一个模式持续跟踪、另一个停留
+旧状态”是相容的解释；没有全程槽位计数或权重，不能确定弃用时间、逐类情况或因果。
+原数值测试验证静态分离样本的双模式读写与DDP一致性，未保证真实长期漂移下槽位存活。
+本次负结果不能被写成双模式均有效使用后的干净对照，也不据此立即排复活死槽训练。
+
+ContrastMetric末段CCM调节系数与IACS动态图像混合较原Route小；SoftEnergy的mix
+在四位日志精度下为0，说明其动态图像度量在该窗口近似退出，但二次项仍非零。
+这是伴随状态，不能断言mix变小导致掉点，亦不支持固定mix补救。BlockMetric的mix
+反而升高，CentreTilt/TextSubspace接近原值，因此不存在“七项统一关闭IACS”的证据。
+TextMetric权重相对1的平均绝对偏离为0.1649，TextSubspace有非零基增量，排除
+新增参数化始终保持零输出的简单解释；不证明文本内容被有效利用，且基增量范数
+不是子空间角度，缺原基相对尺度时不能说语义支配/破坏了视觉基。
+
+决策：现有材料已足够关闭本批当前实现，保留Route48.49；不为这些失败追加调参、
+组合或延长训练，不恢复多种子/语义归因。新结构需有进一步直接证据，当前未排期。
+本次结果与诊断仅本地记录，随下次代码交付push。
+
+### 7.35 原Route-B错误定位与成本作业（2026-09-22，code-ready）
+
+用户询问如何执行赢家错误定位与成本测量，交付`tools/slurm/submit_audit_b.py`。
+一份独立Slurm4卡/4小时只读作业：先用原48.49权重做全ADE验证集错误统计，后在
+一张相同GPU测OffSeg-B/Route-B的固定512 crop前向成本。未在本地提交真实作业，
+没有新训练或新性能结果，不能将code-ready写成已完成证据。
+
+错误诊断保持原配置与512/480滑窗，读取拼接恢复原尺寸后的预测；逐类混淆、FP/FN、
+正确类在错误像素前2/3/5名的比例，边界半径3/5，八连通语义区域按有效图面积分组
+≤0.1%/(0.1%,1%]/>1%，并给面积×边界交叉组。GT仅后处理分组，不进入前向。
+确认无重复样本、聚合mIoU与原IoUMetric一致，所有注册buffer不变；48.49复现偏差
+超过0.02时保留报告并报错。区域不是实例，像素错误率不是类别平均IoU的损失分解。
+
+成本保持原推理实现，统一单GPU/batch1/512/FP32/关闭TF32、cuDNN benchmark=False，
+预置随机输入，预热30次后3×100次，报告同步墙钟、CUDA时间、吞吐和峰值分配显存。
+包括骨干、完整头及输出上采样，不含I/O/预处理/argmax/整图滑窗组装。默认OffSeg
+仅装载Route的共享权重作架构成本测量，不能冒充独立OffSeg46.01精度/权重；可显式
+传入已训练OffSeg checkpoint。记录全部注册参数量和buffer字节。MMEngine追踪的
+FLOPs须披露unsupported operators，出现遗漏为PARTIAL、失败为FAILED，不能发布为
+完整FLOPs；这项工作可能补齐速度/参数而仍留下完整算子计数缺口。
+
+代码快照/动态端口/目录隔离沿用现有方式，结果在`work_dirs/slurm_audits/<批次>/`，
+自动生成`route_audit_b.zip`，默认checkpoint为原Route目录best_mIoU_iter_160000.pth。
+没有新增训练权重或修改旧训练目录；提交前拒绝缺失checkpoint和重复活跃作业。
+数值/协议与模拟提交验证见tools/slurm/README.md，本地GPU/LRZ验证未执行。
+此项诊断不自动导出新结构，不恢复多种子/文本语义归因或失败变体调参。
+
 ## 8. 尚缺的关键证据
 
 ## 8. 尚缺的关键证据
@@ -1720,6 +1853,7 @@ ModeBank显式双模式读写/未观察类别，以及两个gloo进程不等批�
 
 - §7.24 Route-grad的best/last、完成状态、实际seed/SHA、日志与checkpoint路径；
 - §7.31五项的实际运行SHA/seed、last、完整日志与批次路径；best与迭代已由用户汇总补齐；
+- §7.34已核验第二批七项实际配置、记录的SHA/环境/seed/资产hash、20次验证、last、末段40条标量和批次路径；权重可加载性、Slurm最终退出码、ModeBank全程槽位使用未核验，不再重复索取已有材料；
 - Tiny历史对照seed与统一成本测量；本地City-B OffSeg对照已补79.71，见§7.31；
 
 - §7.21 classmix/r8的best/last、完成状态、实际seed/SHA、关键标量及日志/checkpoint路径尚未核验；

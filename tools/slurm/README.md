@@ -197,6 +197,52 @@ Recollect 采用软类别区域汇聚/分发思路，参考
 配置；用模拟调度器验证隔离提交。当前电脑没有 LRZ GPU/Slurm，尚未做服务器端训练。
 完整方法成本测量和未回报日志整理仍需另补；本批不等于全部论文证据已经完成。
 
+## 原 Route-B：错误定位与成本测量（2026-09-22）
+
+登录节点提交一份只读诊断，不进入round2菜单，不重新训练：
+
+```bash
+python3 tools/slurm/submit_audit_b.py
+squeue --me
+```
+
+默认读取原48.49的
+`work_dirs/offsegccmiacs_protoroute_r4_responsibility_ade20k_160k-512x512/best_mIoU_iter_160000.pth`。
+若曾移动，只需显式传`--checkpoint /实际路径/best_mIoU_iter_160000.pth`。
+提交前检查文件存在；`--dry-run`只打印元数据与sbatch命令，不创建目录或排队。
+独立4×A100、4小时上限；四卡正常滑窗验证后，单进程在其中一张卡测成本。
+沿用offseg_new2、冻结当前git HEAD、共享数据/预训练目录，动态分配torchrun端口。
+不会更改训练权重、last_checkpoint或旧训练目录，也不会增加训练checkpoint。
+
+结果目录：`work_dirs/slurm_audits/<时间_uuid>/`，提交后打印完整路径：
+
+- `errors/error_audit.json`、`error_summary.md`：正常全验证集mIoU及错误分组。
+- `errors/per_class.csv`：逐类IoU、TP/FP/FN、查准率/召回率、错误中GT进入前三的比例。
+- `errors/per_image.csv`、`confusion_pairs.csv`：逐图及类别混淆统计。
+- `cost/cost_audit.json`、`cost_summary.md`：参数、同卡延迟、吞吐、显存、计数器覆盖状态。
+- `route_audit_b.zip`：上述结果、配置、运行记录和日志，直接回传此文件。
+- `audit_exit.json`：两阶段脚本退出状态；非零时先读logs，不把部分结果当完整成功。
+
+错误统计读取模型标准推理的拼接/恢复原分辨率logits，不改512/480滑窗。GT仅在预测
+之后分组；确认2000张数据无重复、与原IoUMetric一致、所有注册buffer不变。若不能
+在0.02内复现48.49，保留报告并报错，不直接解释误差。边界由有效GT的四邻域类别
+变化定义，分别向两侧扩张3/5原图像素；小/中/大是八连通同类区域占有效图面积
+≤0.1%、(0.1%,1%]、>1%，不是实例标注。边界与面积分组有重叠，另给交叉分组；
+像素错误比例不能当作mIoU贡献，前三包含GT也不代表可训练收益。
+
+成本统一为FP32/TF32关闭、单卡、batch1、512×512预置随机输入的完整骨干+头+
+输出上采样前向；不含I/O、预处理、argmax与整图滑窗拼接。预热30次，三轮各100次，
+报告同步墙钟和CUDA时间、吞吐、总/增量峰值分配显存。没有假装测完整部署延迟。
+默认OffSeg架构严格加载Route checkpoint的共享权重，仅用于成本，**不是46.01基线
+的精度验证**；若有该基线权重，可加`--offseg-checkpoint /实际路径.pth`。
+Route加载完整权重与记忆，推理冻结。MMEngine计数使用一次乘加算一次的约定，列出
+未支持算子；有遗漏则标PARTIAL_UNSUPPORTED_OPS，追踪失败标FAILED。不可把部分
+FLOPs当完整论文成本，尤其要复核FreqFusion/CARAFE。参数数目包含已注册但前向未用的参数。
+
+本地验证：合成标签的混淆/忽略区/边界/连通域/top-k/不等分片与重复样本检查、真实
+Route头统计前后输出和状态不变、配置解析、模拟sbatch隔离/只读预览/重复拒绝。
+GPU全骨干和实际LRZ调度需服务器执行；本地通过不等于已获得诊断或性能读数。
+
 ## 官方依据
 
 - [LRZ Slurm batch jobs](https://doku.lrz.de/5-2-slurm-batch-jobs-introduction-1898974516.html)：登录节点 sbatch、计算节点执行、srun 作业步骤。
