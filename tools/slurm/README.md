@@ -1,6 +1,35 @@
 # LRZ：每个实验独立排队
 
-## 当前批次：2026-09-18 Round 2
+## 当前批次：2026-09-25 Round 3（两项训练）
+
+原Route诊断已复现48.4924/2000张。用户要求新结构先排队，不等待成本追踪重测。
+本轮两项独立从原Route配置及骨干预训练开始，ADE/S2/512/160k/总batch16/
+seed1370346084，保留原记忆、CCM、IACS公式与两项CE，不加载48.49权重微调。
+
+```bash
+cd /dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2
+git pull --ff-only origin main
+python3 tools/slurm/submit.py round3
+squeue --me
+```
+
+| ID | 训练改动 | 新增参数 |
+|---|---|---:|
+| featurecontext_b_ade | 对齐后、Offset之前的256→64瓶颈；3×3普通/膨胀卷积混合，经零初始化投影残差回写 | 34048 |
+| centrepool_b_ade | 生成本图类别中心时，先跨类别softmax，再逐类跨像素归一化；原像素偏移路径保持 | 0 |
+
+每项独立sbatch申请4卡/48小时、动态端口、不可变源码快照、独立source/logs/checkpoints。
+仍保留2最近普通checkpoint+1best。不需要文本资产，也不依赖成本重测成功。
+只排一项可用准确ID。`round3/all/new/structures`及无参数入口均指向这两项；
+`round2/visual2/text2/round1`保留历史菜单，避免用旧批次名字重跑失败项。
+读取本轮最佳值：`python3 tools/slurm/results.py round3`。
+
+两项仅为待验证假设。FeatureContext与旧Spatial的CCM上下文卷积、RCM融合路径和
+最终分数卷积不同；不否认旧证据侧失败，也不保证换位置有效。CentrePool改变原始
+中心E，而Recollect只向CCM补描述子；它会间接改变后续支撑/记忆内容，但不更改
+写库规则或换成融合中心监督。softmax/深度卷积都是常见构件，不作为独立原创声明。
+
+## 历史批次：2026-09-18 Round 2（七项已回报，均低于48.49）
 
 首批五项已回报：Relation47.61、Dispersion47.59、Recollect46.32、City-B OffSeg79.71、
 Stuff-T Proto42.16，均为用户提供的best汇总。前三项停止扩展；新的七项全部独立基于
@@ -16,7 +45,7 @@ squeue --me
 ```
 
 `round2` 会发出七次独立sbatch，每项4卡/48小时，动态端口、独立代码快照和目录。
-`all`、`new`、`structures`和不带参数的提交入口现均指向本轮七项，**不混入首批实验**。
+当时`all/new/structures`指向七项；09-25已改为当前Round3。显式`round2`仍只指向历史七项。
 只提交纯视觉五项用 `visual2`，只提交文本两项用 `text2`；与round2择一，不要重复。
 历史五项只通过 `round1` 或准确ID访问；旧任务resume/eval仍使用原run.json和快照。
 现有单项 `relation` / `evidence` 保留兼容，不属于本轮命令。
@@ -198,6 +227,14 @@ Recollect 采用软类别区域汇聚/分发思路，参考
 完整方法成本测量和未回报日志整理仍需另补；本批不等于全部论文证据已经完成。
 
 ## 原 Route-B：错误定位与成本测量（2026-09-22）
+
+09-25更新：错误定位已完成并复现48.4924，不需重跑。首次FLOPs追踪因EfficientFormer
+的eval缓存带梯度失败；修复为no_grad内建立缓存，并用两个独立进程测两模型，消除
+跨模型追踪/分配器状态对显存比较的干扰。错误文本截断，避免把整张张量写入JSON。
+若以后要补成本，可用`python3 tools/slurm/submit_audit_b.py --cost-only`，新独立作业
+上限1小时，跳过验证集；不是当前两项训练的前置要求。FLOPs再失败会返回非零状态，
+部分计数仍显式标PARTIAL，不能承诺计数器支持所有算子。原计时作为首次协议读数，
+原总峰值显存待隔离进程复核，不把修复描述成模型提速。
 
 登录节点提交一份只读诊断，不进入round2菜单，不重新训练：
 

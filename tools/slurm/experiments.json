@@ -1,4 +1,14 @@
 {
+  "featurecontext_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_featurecontext_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/featurecontext_b_ade.slurm",
+    "seed": 1370346084
+  },
+  "centrepool_b_ade": {
+    "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_centrepool_b_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/centrepool_b_ade.slurm",
+    "seed": 1370346084
+  },
   "textmetric_b_ade": {
     "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_textmetric_b_r4_responsibility_ade20k_160k-512x512.py",
     "script": "tools/slurm/textmetric_b_ade.slurm",

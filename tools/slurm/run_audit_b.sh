@@ -8,6 +8,7 @@ import json,sys
 m=json.load(open(sys.argv[1]))
 for k in ('conda_base','conda_env','run_dir','config','checkpoint','offseg_checkpoint'):
     print(m.get(k) or '')
+print('1' if m.get('cost_only',False) else '0')
 PY
 )
 set +u
@@ -24,10 +25,12 @@ python -c 'import torch,cv2; assert torch.cuda.device_count()==4; print(torch.__
 exec 9>"$run/.audit.lock"
 flock -n 9 || { echo 'This audit is already running'; exit 2; }
 status=0
-python -m torch.distributed.run --rdzv-backend=c10d --rdzv-endpoint=localhost:0 \
+if [[ "${settings[6]}" != 1 ]]; then
+  python -m torch.distributed.run --rdzv-backend=c10d --rdzv-endpoint=localhost:0 \
     "--rdzv-id=audit-$SLURM_JOB_ID" --nnodes=1 --nproc_per_node=4 --max_restarts=0 \
     tools/route_error_audit_b.py "$config" "$checkpoint" \
     --launcher pytorch --work-dir "$run/errors" || status=$?
+fi
 extra=()
 if [[ -n "${settings[5]}" ]]; then extra+=(--offseg-checkpoint "${settings[5]}"); fi
 python tools/route_cost_audit_b.py "$config" "$checkpoint" \

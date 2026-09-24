@@ -90,7 +90,7 @@ def scheduler():
          patch.object(submit, 'ROOT', temp), \
          patch.object(submit, 'freeze_assets', lambda meta: original_freeze(meta, repo=temp)), \
          patch.object(submit.subprocess, 'check_output', return_value=archive.getvalue()):
-        run('all', '--runs-root', str(temp), '--dry-run')
+        run('round2', '--runs-root', str(temp), '--dry-run')
         assert not calls and not list(temp.glob('*/run.json'))
         try:
             with contextlib.redirect_stderr(io.StringIO()):
@@ -104,7 +104,7 @@ def scheduler():
             asset = temp / name
             asset.parent.mkdir(parents=True, exist_ok=True)
             asset.write_bytes(b'frozen asset fixture')
-        run('all', '--runs-root', str(temp))
+        run('round2', '--runs-root', str(temp))
         assert len(calls) == 7
         assert len({next(a for a in c if a.startswith('--chdir=')) for c in calls}) == 7
         assert len({c[c.index('--work-dir') + 1] for c in calls}) == 7
@@ -134,6 +134,13 @@ def scheduler():
         except SystemExit as exc:
             assert exc.code == 2
         assert len(calls) == 9
+        assert submit.select_jobs('all') == submit.ROUND3
+        run('round3', '--runs-root', str(temp))
+        assert len(calls) == 11
+        latest = [json.loads(p.read_text()) for p in temp.glob('*/*/run.json') if json.loads(p.read_text())['experiment'] in submit.ROUND3]
+        assert len(latest) == 2
+        assert len({m['work_dir'] for m in latest}) == 2
+        assert all(not m.get('assets') for m in latest)
     bash = Path('C:/Program Files/Git/bin/bash.exe') if sys.platform == 'win32' else Path('/bin/bash')
     for name in ['tools/slurm/run_job.sh'] + [v['script'] for v in submit.CATALOG.values()]:
         text = (ROOT / name).read_text()
@@ -142,7 +149,7 @@ def scheduler():
         if name.endswith('.slurm'):
             for directive in ('--ntasks=1', '--gres=gpu:4', '--time=48:00:00', '--partition=mcml-hgx-a100-80x4'):
                 assert directive in text
-    print('PASS seven isolated jobs, missing-asset guard, frozen asset hashes, duplicate blocking, resume/eval and Bash syntax')
+    print('PASS historical seven and current two isolated jobs, frozen assets, duplicate blocking, resume/eval and Bash syntax')
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
 """Synthetic metric oracles, frozen real-head transparency and mocked sbatch."""
 import contextlib
+import ast
 import copy
 import importlib.util
 import io
@@ -153,9 +154,79 @@ def configs():
     print('PASS unchanged ADE slide protocol, identical S2 cost backbone, checkpoint prefixes')
 
 
+def cost_cache_regression():
+    import itertools
+    import math
+    import torch
+    from mmengine.analysis import FlopAnalyzer
+    from route_cost_audit_b import prepare_eval, short_error
+    # Execute the actual backbone class without importing unrelated compiled ops.
+    path=ROOT/'mmseg/models/backbones/efficientformer_v2.py'
+    node=next(n for n in ast.parse(path.read_text(encoding='utf-8')).body if isinstance(n,ast.ClassDef) and n.name=='Attention4D')
+    scope=dict(torch=torch,nn=torch.nn,itertools=itertools,math=math)
+    exec(compile(ast.Module(body=[node],type_ignores=[]),str(path),'exec'),scope)
+    attention=scope['Attention4D'](dim=8,key_dim=2,num_heads=2,attn_ratio=2,resolution=3)
+    attention.eval()
+    assert attention.ab.requires_grad
+    x=torch.randn(1,8,3,3)
+    with torch.no_grad():
+        reference=attention(x)
+        try:
+            FlopAnalyzer(attention,(x,)).total()
+            raise AssertionError('Expected original cached-gradient tracing failure')
+        except RuntimeError as exc:
+            assert 'requires grad as a constant' in str(exc)
+    state=copy.deepcopy(attention.state_dict())
+    prepare_eval(attention)
+    assert not attention.ab.requires_grad and attention.ab.grad_fn is None
+    with torch.no_grad():
+        torch.testing.assert_close(reference,attention(x),rtol=0,atol=0)
+        analyzer=FlopAnalyzer(attention,(x,)).unsupported_ops_warnings(False)
+        assert analyzer.total()>0
+    for k,v in state.items():
+        torch.testing.assert_close(v,attention.state_dict()[k],rtol=0,atol=0)
+    assert len(short_error(RuntimeError('failure\nTensor:'+'x'*100000)))<100
+    print('PASS actual EfficientFormer cache failure reproduced; no_grad eval fixes tracing with exact outputs/state')
+
+
+def isolated_cost_dispatch():
+    import torch
+    import route_cost_audit_b as cost
+    with tempfile.TemporaryDirectory(dir=ROOT/'tmp') as folder:
+        calls=[]
+        def worker(cmd,check):
+            assert check
+            which=cmd[cmd.index('--worker-model')+1]
+            calls.append(which)
+            label='OffSeg-B' if which=='offseg' else 'Proto-route-B'
+            result=dict(protocol='fixture',gpu='fixture',torch='fixture',cuda='fixture',cudnn='fixture',models={label:dict(
+                weights='fixture',parameters=1,repeats=[dict(wall_mean_ms=1,peak_allocated_bytes=10)],complexity=dict(status='TRACED_ESTIMATE'))})
+            (Path(folder)/('cost_'+which+'.json')).write_text(json.dumps(result))
+        args=['cost','route.py','route.pth','--work-dir',folder]
+        with patch.object(sys,'argv',args),patch.object(torch.cuda,'is_available',return_value=True),patch.object(cost.subprocess,'run',side_effect=worker):
+            with contextlib.redirect_stdout(io.StringIO()):
+                cost.main()
+        assert calls==['offseg','route']
+        assert len(json.loads((Path(folder)/'cost_audit.json').read_text())['models'])==2
+    import submit_audit_b as task
+    with tempfile.TemporaryDirectory(dir=ROOT/'tmp') as folder:
+        ckpt=Path(folder)/'test.pth'
+        ckpt.write_bytes(b'fixture')
+        capture=io.StringIO()
+        with patch.object(sys,'argv',['submit','--checkpoint',str(ckpt),'--cost-only','--dry-run']),patch.object(task,'command',return_value='test-sha'):
+            with contextlib.redirect_stdout(capture):
+                task.main()
+        data=json.loads(capture.getvalue())
+        assert data['metadata']['cost_only'] and '--time=01:00:00' in data['command']
+        assert '--job-name=os2_route_cost_b' in data['command']
+    print('PASS separate cost-worker dispatch/merge and cost-only one-hour sbatch preview')
+
+
 if __name__ == '__main__':
     (ROOT/'tmp').mkdir(exist_ok=True)
     statistics_checks()
     configs()
+    cost_cache_regression()
     frozen_head()
     submission()
+    isolated_cost_dispatch()

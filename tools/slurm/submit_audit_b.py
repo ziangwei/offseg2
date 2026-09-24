@@ -19,23 +19,27 @@ def main():
     parser.add_argument('--offseg-checkpoint', type=Path)
     parser.add_argument('--runs-root', type=Path, default=ROOT/'work_dirs/slurm_audits')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--cost-only', action='store_true', help='Skip the already-completed validation/error audit')
     args = parser.parse_args()
     checkpoint = args.checkpoint.resolve()
     if not checkpoint.is_file():
         parser.error(f'Missing Route best: {checkpoint}; pass --checkpoint /actual/path.pth')
     if args.offseg_checkpoint and not args.offseg_checkpoint.is_file():
         parser.error('Missing --offseg-checkpoint')
-    job_name = 'os2_route_audit_b'
+    job_name = 'os2_route_cost_b' if args.cost_only else 'os2_route_audit_b'
     if not args.dry_run and job_name in active_names():
         parser.error('A Route audit is already queued/running; use squeue --me')
     sha = command(['git', 'rev-parse', 'HEAD'])
     run = args.runs_root.resolve() / (datetime.now().strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:6])
     meta = dict(git_sha=sha, run_dir=str(run), config=CONFIG, checkpoint=str(checkpoint),
                 offseg_checkpoint=str(args.offseg_checkpoint.resolve()) if args.offseg_checkpoint else None,
-                conda_base=DEFAULT_CONDA, conda_env='offseg_new2', status='prepared')
+                conda_base=DEFAULT_CONDA, conda_env='offseg_new2', status='prepared',
+                cost_only=args.cost_only)
     cmd = ['sbatch', '--parsable', '--job-name='+job_name, '--chdir='+str(run/'source'),
            '--output='+str(run/'logs/slurm-%j.log'), '--error='+str(run/'logs/slurm-%j.log'),
            str(run/'source/tools/slurm/route_audit_b.slurm'), str(run/'run.json')]
+    if args.cost_only:
+        cmd.insert(2, '--time=01:00:00')
     if args.dry_run:
         print(json.dumps(dict(metadata=meta, command=cmd), indent=2))
         return

@@ -23,6 +23,7 @@ VISUAL2 = ['modebank_b_ade', 'centretilt_b_ade', 'blockmetric_b_ade',
            'contrastmetric_b_ade', 'softenergy_b_ade']
 TEXT2 = ['textmetric_b_ade', 'textsubspace_b_ade']
 ROUND2 = VISUAL2 + TEXT2
+ROUND3 = ['featurecontext_b_ade', 'centrepool_b_ade']
 ROUND1 = ['relation_b_ade', 'dispersion_b_ade', 'recollect_b_ade',
           'offseg_b_city', 'proto_t_stuff']
 
@@ -32,7 +33,9 @@ def command(args, cwd=ROOT):
 
 
 def select_jobs(selection):
-    if selection in ('round2', 'all', 'new', 'structures'):
+    if selection in ('round3', 'all', 'new', 'structures'):
+        return list(ROUND3)
+    if selection == 'round2':
         return list(ROUND2)
     if selection == 'round1':
         return list(ROUND1)
@@ -108,8 +111,8 @@ def active_names():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('selection', nargs='?', default='round2',
-                        help='round2/all/new/structures (current seven), visual2 (five), text2 (two), round1 (historical five), or exact experiment ID')
+    parser.add_argument('selection', nargs='?', default='round3',
+                        help='round3/all/new/structures (current two); round2/visual2/text2/round1 are historical; or exact experiment ID')
     parser.add_argument('--dry-run', action='store_true', help='Print commands without submitting or writing snapshots')
     parser.add_argument('--runs-root', type=Path, default=ROOT / 'work_dirs/slurm_runs')
     modes = parser.add_mutually_exclusive_group()

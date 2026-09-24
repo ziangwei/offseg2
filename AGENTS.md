@@ -73,6 +73,11 @@ Owner preferences updated on 2026-09-18:
 These were each violated once in this repository and cost a full training slot or a
 retraction. They are not general advice; they are specific to how this project fails.
 
+Owner preference updated on 2026-09-25: the completed Route error audit is sufficient to
+start two bounded input-side training hypotheses. Do not make a repeat cost/FLOPs audit
+a prerequisite for training. Round3 is FeatureContext + CentrePool; each is a separate
+4-GPU/48h job. The cost-only rerun remains optional and is never automatically queued.
+
 1. **Never read a mechanism conclusion out of a difference between two losing arms.**
    `pairwhiten 46.95` vs `pairraw 46.19` was written up as "whitening is the right
    object, only the penalty form failed" and used three times to keep the pair line
