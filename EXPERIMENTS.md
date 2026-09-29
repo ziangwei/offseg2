@@ -1892,7 +1892,25 @@ IoU21.010，precision89.95%/recall21.51%，错像素GT在前三仅0.35%。这些
 用户明确不愿因额外成本重测延误新训练：现有证据可用于少量结构尝试，成本重跑
 不作为前置，不自动排队；两项新训练见§7.37。
 
-### 7.37 Round3：两项输入侧假设（2026-09-25，config-ready）
+### 7.37 Round3：两项输入侧假设（09-29更新：FeatureContext 47.32，CentrePool中断）
+
+2026-09-29用户回报：FeatureContext **47.32**，相对原Route48.49为**-1.17**；
+标记owner-reported，best/last、对应迭代、完整完成状态和末段acc_feature_move未核验。
+配置为`local_configs/offseg2/Base/offsegccmiacs_protoroute_featurecontext_b_r4_responsibility_ade20k_160k-512x512.py`。
+不继续调此实现的宽度/膨胀率，不由单次结果推断所有特征增强无效。
+
+CentrePool用户确认训练中途停止，无成绩回报，状态interrupted/unreported，非失败成绩。
+配置为`local_configs/offseg2/Base/offsegccmiacs_protoroute_centrepool_b_r4_responsibility_ade20k_160k-512x512.py`；
+用户提供运行目录`work_dirs/slurm_runs/20260924_200916_e0b1a1/centrepool_b_ade`。
+恢复使用`python3 tools/slurm/submit.py --resume-run work_dirs/slurm_runs/20260924_200916_e0b1a1/centrepool_b_ade`，
+沿用run.json中的原源码快照/环境/工作目录，从last_checkpoint恢复权重、优化器和调度器，
+补完原160k，不重新起训。中断原因、最后保存迭代、checkpoint完整性尚未检查；
+脚本启动前会检查恢复文件及其状态，不能在未读取服务器文件时宣称恢复成功。
+两项配置协议仍为ADE20K/S2/512/160k、seed1370346084；交付提交407bd17，
+实际运行SHA/seed需以各run.json/launch和日志为准。FeatureContext日志路径未单独提供，
+不能将CentrePool的批次路径直接当作其已核验路径。此结果随本次§7.38矩阵代码一并交付。
+
+以下为09-25的设计与交付记录。
 
 用户要求在已有诊断基础上先排其他训练，不等待成本修复回报。仅安排两项独立臂，
 均以原Route48.49为正确对照；不是基于失败变体继续调参或组合。现有诊断允许把
@@ -1943,6 +1961,55 @@ IoU21.010，precision89.95%/recall21.51%，错像素GT在前三仅0.35%。这些
 输出一致；CentrePool显式公式、像素路径逐值不变、类别置换和像素公共偏移不变性、
 极值稳定性；真实MMEngine配置完整比较、模拟两项独立Slurm提交及全部Bash语法。
 使用现有框架/特征骨干桩，未在本地验证GPU骨干/FreqFusion训练，未真实提交到LRZ。
+
+### 7.38 原版Route完整三数据集 × T/B/L（2026-09-29，config-ready）
+
+用户要求将最佳模型尚未尝试的数据集/尺寸全部补齐，形成3×3绝对成绩表。明确授权
+ADE-T/L的规模迁移；ADE-B方法开发地基仍固定S2。只排五个缺格，不加新方法、不组合
+失败臂、不重复种子，不把历史PARSeg3或原Proto结果算作Route。
+
+| 数据集 | T / S1 | B / S2 | L |
+|---|---|---|---|
+| ADE20K | route_t_ade，待训练 | 48.49，best=last@160k，诊断复现48.4924 | route_l_ade，待训练 |
+| COCO-Stuff164K | 42.32，best=last@80k截图 | 44.75，末次权重验证回报，历史best未核验 | route_l_stuff，待训练 |
+| Cityscapes | route_t_city，待训练 | 80.69，用户best回报，迭代未核验 | route_l_city，待训练 |
+
+五个完整配置（相对仓库根目录）：
+
+- `local_configs/offseg2/Tiny/offsegccmiacs_protoroute_t_r4_responsibility_ade20k_160k-512x512.py`
+- `local_configs/offseg2/Large/offsegccmiacs_protoroute_l_r4_responsibility_ade20k_160k-512x512.py`
+- `local_configs/offseg2/Large/offsegccmiacs_protoroute_l_r4_responsibility_stuff164k_80k-512x512.py`
+- `local_configs/offseg2/Tiny/offsegccmiacs_protoroute_t_r4_responsibility_cityscapes_160k-1024x1024.py`
+- `local_configs/offseg2/Large/offsegccmiacs_protoroute_l_r4_responsibility_cityscapes_160k-1024x1024.py`
+
+均继承目标数据集的原B Route，仅替换原OffSeg对应规模骨干、输入/投影通道和work_dir。
+T=S1，[32,48,120,224]→[32,32,64,128]；L为efficientformerv2_l_feat，
+[40,80,192,384]→[32,64,128,256]；head channels仍为256。保留原Route所有方法参数：
+CCM-r64、IACS-r4、EMA .01、n0初值200、warmup4000、两项CE及梯度截断设置。
+不加载48.49整模型，独立从目标规模骨干预训练起训，在各目标数据集重建原型库；
+这是有监督方法迁移，不是ADE权重零样本测试。
+
+ADE为150类/512/160k/4×4/seed1370346084，每8k验证；Stuff为171类/512/80k/
+4×4/seed2000199364，每4k验证；City为19类/1024/160k/4×2/seed1370346084，
+每8k验证。原各数据集滑窗/学习率/优化器/增强不变。L的旧Stuff文件名虽含160k，
+实际官方仓库配置端点为80k，新文件明确命名80k，与已测T/B保持同预算。
+
+提交`python3 tools/slurm/submit.py matrix`，亦为round4/all/new/default菜单。
+五项独立4卡48小时、动态端口、冻结源码/环境、独立日志/权重；保留2最近普通+1best。
+提交前统一检查S1/L本地预训练权重非空，避免缺资产浪费排队；服务器实际文件尚未检查。
+L显存/速度尚未实测，不保证48h内完成；若超时沿原run.json恢复，不暗改batch/crop。
+CentrePool中断恢复独立于这五项，不重新提交FeatureContext或整个round3。
+
+结果入口：`results.py matrix`读五项best/iter/file，`route_matrix.py`打印完整3×3，
+四项历史读数标注来源，五项新日志为best-so-far、未出值显示空缺，不混成完成状态。
+该矩阵回答最终方法在各规模/数据集上的绝对成绩；缺少逐格本地OffSeg对照的地方，
+不能直接宣称严格配对增益或跨种子稳定性。本次未额外排基线或多种子。
+
+本地验证：真实MMEngine解析五配置并与各数据集原B Route逐字段比较，除规模/目录外
+一致；独立核对原OffSeg T/L通道/骨干、步数与调度端点、batch、20次验证、2+best。
+模拟独立五项sbatch、缺权重整批阻止、历史菜单/续训、全部脚本Bash语法，以及矩阵
+历史/中间best/权重缺失显示均通过。本轮无head代码变更，未做服务器GPU运行。
+状态仅config-ready，实际SHA、训练完成与best/last读数待服务器运行后记录。
 
 ## 8. 尚缺的关键证据
 

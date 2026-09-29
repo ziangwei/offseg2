@@ -24,6 +24,7 @@ VISUAL2 = ['modebank_b_ade', 'centretilt_b_ade', 'blockmetric_b_ade',
 TEXT2 = ['textmetric_b_ade', 'textsubspace_b_ade']
 ROUND2 = VISUAL2 + TEXT2
 ROUND3 = ['featurecontext_b_ade', 'centrepool_b_ade']
+MATRIX = ['route_t_ade', 'route_l_ade', 'route_l_stuff', 'route_t_city', 'route_l_city']
 ROUND1 = ['relation_b_ade', 'dispersion_b_ade', 'recollect_b_ade',
           'offseg_b_city', 'proto_t_stuff']
 
@@ -33,7 +34,9 @@ def command(args, cwd=ROOT):
 
 
 def select_jobs(selection):
-    if selection in ('round3', 'all', 'new', 'structures'):
+    if selection in ('matrix', 'round4', 'all', 'new'):
+        return list(MATRIX)
+    if selection in ('round3', 'structures'):
         return list(ROUND3)
     if selection == 'round2':
         return list(ROUND2)
@@ -111,8 +114,8 @@ def active_names():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('selection', nargs='?', default='round3',
-                        help='round3/all/new/structures (current two); round2/visual2/text2/round1 are historical; or exact experiment ID')
+    parser.add_argument('selection', nargs='?', default='matrix',
+                        help='matrix/round4/all/new (five missing Route cells); round3/round2/round1 are historical; or exact experiment ID')
     parser.add_argument('--dry-run', action='store_true', help='Print commands without submitting or writing snapshots')
     parser.add_argument('--runs-root', type=Path, default=ROOT / 'work_dirs/slurm_runs')
     modes = parser.add_mutually_exclusive_group()
@@ -163,6 +166,15 @@ def main():
     if duplicate:
         parser.error('Already pending/running: ' + ', '.join(duplicate))
     if not existing:
+        # Shared backbone weights are linked into snapshots, never copied per job.
+        # Catch a missing L/S1 asset before submitting any of the five allocations.
+        backbones = {meta['backbone_checkpoint'] for meta in prepared
+                     if meta.get('backbone_checkpoint')}
+        missing_backbones = [name for name in sorted(backbones)
+                             if not (ROOT / name).is_file() or (ROOT / name).stat().st_size == 0]
+        if missing_backbones:
+            parser.error('Missing backbone checkpoint: ' + ', '.join(missing_backbones) +
+                         '. Restore the existing pretrained weights before submission.')
         required = {name for meta in prepared for name in meta.get('assets', [])}
         missing = [name for name in sorted(required) if not (ROOT / name).is_file()]
         if missing:

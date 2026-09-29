@@ -1,6 +1,18 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-09-25
+> 最后更新：2026-09-29
+>
+> **09-29泛化矩阵交付：** 用户要求原版Route补齐ADE/Stuff/City × T/B/L；已有四格，
+> 新增ADE-T、ADE-L、Stuff-L、City-T、City-L五项配置和独立Slurm作业，config-ready。
+> 入口`python3 tools/slurm/submit.py matrix`，CentrePool续训单独进行；不重跑已测格。
+> 三数据集预算分别160k/80k/160k，同数据集保持既有batch/crop/seed和Route机制。
+> ADE-T/L为明确授权的规模迁移，ADE-B仍是方法开发基准。详情见EXPERIMENTS.md §7.38。
+>
+> **09-29 Round3回报：** FeatureContext 47.32（-1.17 vs Route48.49），owner-reported，
+> best/last和迭代未核验，停止当前实现扩展。CentrePool中途停止，尚无结果；
+> 当前动作是用原run.json/源码快照及last_checkpoint续跑至原160k，不重开训练。
+> 运行目录`work_dirs/slurm_runs/20260924_200916_e0b1a1/centrepool_b_ade`，详见§7.37。
+> 原Route48.49仍为主模型。此结果随本次泛化矩阵代码一并交付。
 >
 > **09-25原Route诊断已回报：** ADE2000张复现48.4924，5像素边界带外占错误68.43%；
 > 错误中GT进入前2/3/5比例53.69%/71.03%/84.75%，不能直接推出重排可训练。
@@ -212,9 +224,14 @@ Responsibility：用跨类竞争后的像素责任度估计该二阶几何
 
 ### 当前证据
 
+09-29当前队列：原版Route五个缺失泛化格，§7.38，均config-ready；CentrePool原任务
+单独恢复。矩阵为ADE [T待测/B48.49/L待测]、Stuff [T42.32/B44.75末次/L待测]、
+City [T待测/B80.69 best/L待测]。不把历史PARSeg成绩或未跑配置填成Route结果。
+
 09-25：原Route诊断与首次成本结果见§7.36，48.49复现；完整FLOPs仍未测得。
-用户明确先排两项新结构而非等待再测，当前队列为§7.37 FeatureContext/CentrePool，
-均config-ready，不与失败臂组合。现有诊断只是缩小探索范围，不构成有效性证明。
+用户明确先排两项新结构而非等待再测，§7.37 FeatureContext/CentrePool已交付。
+09-29更新：FeatureContext回报47.32，CentrePool中断待恢复；不重复提交round3。
+现有诊断只是缩小探索范围，不构成有效性证明，当前优先补完CentrePool原训练。
 
 09-22后续：错误定位与成本代码已就绪，尚无实测回报；不把统计口径或预期当结果。
 该作业保持原Route权重/预测链，只读分析，具体定义与边界见§7.35。
@@ -334,7 +351,8 @@ FLOPs 未测前也不能宣称 Pareto 更优。
 
 ## 3. 不可谈判的研究约束
 
-1. ADE 主实验 backbone 永远固定为 EfficientFormerV2-S2；不能靠换 backbone 获益。
+1. ADE 方法开发主实验 backbone 固定为 EfficientFormerV2-S2；不能靠换 backbone 冒充方法增益。
+   09-29用户明确授权ADE-T/L作为完整3×3矩阵的规模迁移实验，与主实验区分。
 2. 不使用任何形式的蒸馏，必须端到端直接训练。
 3. 训练 trick 可以辅助，但不能成为主要贡献。
 4. 方法必须有可解释的对象、分解或原理，而不是只增加一组权重。
@@ -951,9 +969,14 @@ bash tools/dist_train.sh local_configs/offseg2/Base/offsegccm_bipolarrge_r4_ade2
 
 ## 14. 完成论文证据链前必须补齐
 
+2026-09-29：§7.38五个Route泛化格已配置，尚缺真实训练记录/实际seed与SHA、
+best/last/迭代和模型成本；L服务器预训练资产及显存/速度待运行核验。当前只补
+完整方法成绩矩阵，不自动扩大成每格OffSeg基线或多种子队列。
+
 2026-09-25：§7.35诊断已回传，§7.36确认48.4924、全2000图与分组/逐类统计，
 参数和首次单卡计时已得；FLOPs FAILED及原总峰值显存需修复/隔离后复核，用户
-不要求将成本重跑作为前置。§7.37两项新训练结果待回报，当前未真实提交服务器。
+不要求将成本重跑作为前置。09-29 §7.37已回报FeatureContext47.32，仍缺best/last、
+迭代和日志；CentrePool中断，需从原checkpoint恢复，尚缺中断原因/迭代及最终结果。
 
 2026-09-22新增待回传：§7.35原Route错误定位/成本作业的zip；需确认48.49复现、
 逐类和分组统计、同卡成本及FLOPs算子覆盖，当前仅code-ready。

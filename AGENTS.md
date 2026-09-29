@@ -78,6 +78,14 @@ start two bounded input-side training hypotheses. Do not make a repeat cost/FLOP
 a prerequisite for training. Round3 is FeatureContext + CentrePool; each is a separate
 4-GPU/48h job. The cost-only rerun remains optional and is never automatically queued.
 
+Owner request updated on 2026-09-29: complete the original Proto-route 3-dataset x T/B/L
+matrix. This explicitly authorizes ADE-T/L scale-transfer runs alongside the fixed ADE-B
+method-development anchor. Missing cells are ADE-T/L, Stuff-L, City-T/L; do not rerun the
+four reported cells or substitute PARSeg/Proto/failed variants. New L names use `_l_`.
+Current Slurm group/default is `matrix` (alias `round4`), five independent jobs; historical
+Round3 is no longer the current default. CentrePool resume is separate. Record source and
+best/last distinctions in the matrix; Stuff-B 44.75 is a final-checkpoint evaluation report.
+
 1. **Never read a mechanism conclusion out of a difference between two losing arms.**
    `pairwhiten 46.95` vs `pairraw 46.19` was written up as "whitening is the right
    object, only the penalty form failed" and used three times to keep the pair line

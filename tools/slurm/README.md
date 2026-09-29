@@ -1,6 +1,67 @@
 # LRZ：每个实验独立排队
 
-## 当前批次：2026-09-25 Round 3（两项训练）
+## 当前批次：2026-09-29 原版 Proto-route 的三数据集 × T/B/L
+
+本批只补原版Proto-route尚无结果的五格。不是FeatureContext/CentrePool变体，
+不是多种子，也不重跑已有四格。所有目标数据集独立训练，从对应骨干预训练初始化。
+
+| 数据集 | T / S1 | B / S2 | L |
+|---|---|---|---|
+| ADE20K | **本批 route_t_ade** | 48.49，best=last，已核验 | **本批 route_l_ade** |
+| COCO-Stuff164K | 42.32，best=last，截图 | 44.75，末次权重验证，best未核验 | **本批 route_l_stuff** |
+| Cityscapes | **本批 route_t_city** | 80.69，用户best回报 | **本批 route_l_city** |
+
+```bash
+cd /dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2
+git pull --ff-only origin main
+python3 tools/slurm/submit.py matrix
+squeue --me
+```
+
+`matrix/round4/all/new`和默认提交入口均为这五项；`round3`/`structures`保留历史两项，
+不要再次提交它们。每项单独sbatch，4卡48小时、动态端口、原子保存run.json、独立
+源码快照/日志/checkpoints；实际并发数由Slurm配额决定。仍为2最近普通checkpoint+1best。
+不保证L在48小时内结束；到时用`--resume-run`接续，不降低batch或悄悄改训练步数。
+
+预训练文件沿用历史OffSeg路径，必须已有非空文件：
+`pretrained/eformer_v2/eformer_s1_450.pth`、`pretrained/eformer_v2/eformer_l_450.pth`。
+五项全部提交之前统一检查；权重/数据经原快照符号链接复用，不每项复制一遍。
+本地未读取服务器资产；缺失时报出具体路径，恢复已有预训练文件后重新提交。
+
+| 项目 | ADE20K T/L | Stuff L | Cityscapes T/L |
+|---|---|---|---|
+| 类数 / crop | 150 / 512 | 171 / 512 | 19 / 1024 |
+| 迭代 / 总batch | 160k / 16 | 80k / 16 | 160k / 8 |
+| 验证与保存间隔 | 8k | 4k | 8k |
+| seed | 1370346084 | 2000199364 | 1370346084 |
+
+相对各数据集原B Route配置只换骨干、输入/投影通道和work_dir；保留CCM-r64、
+IACS-r4、原型EMA .01、n0初值200、warmup4000及原监督/滑窗/优化器。L使用原
+OffSeg-L的[40,80,192,384]输入和[32,64,128,256]投影；T使用S1对应通道。
+历史OffSeg-L Stuff文件名写160k但实际schedule为80k，新配置明确命名80k。
+
+一次查看本批五项best、迭代及文件是否存在：
+
+```bash
+python3 tools/slurm/results.py matrix
+```
+
+打印完整3×3表（四项历史值加五项最新日志best；历史来源、best/last口径在表后列出）：
+
+```bash
+python3 tools/slurm/route_matrix.py
+```
+
+新日志分数是best-so-far，不等于训练完成；缺失结果显示`--`。同ID有多次提交时取最新
+run目录。该表是完整方法的绝对成绩矩阵，不能替代尚缺的逐格本地OffSeg配对增量。
+
+本批不包含CentrePool恢复。如果它尚未重新排队，单独运行：
+
+```bash
+python3 tools/slurm/submit.py --resume-run work_dirs/slurm_runs/20260924_200916_e0b1a1/centrepool_b_ade
+```
+
+## 历史批次：2026-09-25 Round 3（FeatureContext 47.32；CentrePool中断）
 
 原Route诊断已复现48.4924/2000张。用户要求新结构先排队，不等待成本追踪重测。
 本轮两项独立从原Route配置及骨干预训练开始，ADE/S2/512/160k/总batch16/
@@ -104,7 +165,7 @@ EXPERIMENTS.md §7.31–7.32；下文为首批交付历史与通用恢复说明�
 `mcml-hgx-a100-80x4`，qos `mcml`。批量入口逐个调用 `sbatch`，不会在一份
 48 小时申请里串行训练多个模型。实际启动时间/并发数由配额和调度器决定。
 
-## 首批历史提交命令（已完成，当前请用上面的round2）
+## 首批历史提交命令（已完成，当前请用上面的matrix）
 
 ```bash
 cd /dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2

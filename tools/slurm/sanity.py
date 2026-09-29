@@ -82,7 +82,7 @@ def scheduler():
     original_freeze = submit.freeze_assets
     def snapshot(data, dest):
         # No dataset assets are necessary for this scheduler-only fixture.
-        return original_snapshot(data, dest, repo=temp)
+        return original_snapshot(data, dest, repo=temp / 'no_shared_assets')
     def run(*args):
         with patch.object(sys, 'argv', ['submit.py', *args]), contextlib.redirect_stdout(io.StringIO()):
             submit.main()
@@ -134,13 +134,38 @@ def scheduler():
         except SystemExit as exc:
             assert exc.code == 2
         assert len(calls) == 9
-        assert submit.select_jobs('all') == submit.ROUND3
+        assert submit.select_jobs('all') == submit.MATRIX
         run('round3', '--runs-root', str(temp))
         assert len(calls) == 11
         latest = [json.loads(p.read_text()) for p in temp.glob('*/*/run.json') if json.loads(p.read_text())['experiment'] in submit.ROUND3]
         assert len(latest) == 2
         assert len({m['work_dir'] for m in latest}) == 2
         assert all(not m.get('assets') for m in latest)
+        # Missing scale-specific weights must stop the entire new batch early.
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                run('matrix', '--runs-root', str(temp))
+            raise AssertionError('Missing backbone weights accepted')
+        except SystemExit as exc:
+            assert exc.code == 2
+        assert len(calls) == 11
+        for name in {v['backbone_checkpoint'] for v in submit.CATALOG.values()
+                     if v.get('backbone_checkpoint')}:
+            weight = temp / name
+            weight.parent.mkdir(parents=True, exist_ok=True)
+            weight.write_bytes(b'backbone existence fixture, not a real model')
+        run('matrix', '--runs-root', str(temp))
+        assert len(calls) == 16
+        matrix = [json.loads(p.read_text()) for p in temp.glob('*/*/run.json')
+                  if json.loads(p.read_text())['experiment'] in submit.MATRIX]
+        assert len(matrix) == 5
+        assert len({m['work_dir'] for m in matrix}) == 5
+        assert all(not m.get('assets') for m in matrix)
+        for item in matrix:
+            assert item['partition'] == 'mcml-hgx-a100-80x4'
+            assert item['gpus'] == 4 and item['time'] == '48:00:00'
+        assert set(submit.MATRIX).isdisjoint(submit.ROUND3)
+        assert submit.select_jobs('round4') == submit.MATRIX
     bash = Path('C:/Program Files/Git/bin/bash.exe') if sys.platform == 'win32' else Path('/bin/bash')
     for name in ['tools/slurm/run_job.sh'] + [v['script'] for v in submit.CATALOG.values()]:
         text = (ROOT / name).read_text()
@@ -149,7 +174,7 @@ def scheduler():
         if name.endswith('.slurm'):
             for directive in ('--ntasks=1', '--gres=gpu:4', '--time=48:00:00', '--partition=mcml-hgx-a100-80x4'):
                 assert directive in text
-    print('PASS historical seven and current two isolated jobs, frozen assets, duplicate blocking, resume/eval and Bash syntax')
+    print('PASS 7+2+5 isolated jobs, backbone/asset guards, duplicate blocking, frozen resume/eval and Bash syntax')
 
 
 if __name__ == '__main__':
