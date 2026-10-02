@@ -86,6 +86,14 @@ Current Slurm group/default is `matrix` (alias `round4`), five independent jobs;
 Round3 is no longer the current default. CentrePool resume is separate. Record source and
 best/last distinctions in the matrix; Stuff-B 44.75 is a final-checkpoint evaluation report.
 
+Owner request updated on 2026-10-02: run local ORIGINAL OffSeg controls for Cityscapes-T
+and Cityscapes-L, matching the corresponding Route protocol. Keep all outcomes, whether
+higher or lower than external references. Current group/default is `citycontrols` (round5),
+not a rerun of matrix. All newly submitted training and resumed allocations now request
+36 hours, superseding earlier 48-hour settings. The current submitter must override the
+old snapshot's SBATCH time on resume without changing frozen training source. Existing
+queued/running jobs are not modified. Short 1h/4h diagnostic jobs remain short.
+
 1. **Never read a mechanism conclusion out of a difference between two losing arms.**
    `pairwhiten 46.95` vs `pairraw 46.19` was written up as "whitening is the right
    object, only the penalty form failed" and used three times to keep the pair line

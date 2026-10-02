@@ -118,10 +118,16 @@ def scheduler():
                 assert len(digest) == 64 and not frozen_asset.is_symlink()
         run_dir = records[0].parent
         meta = json.loads(records[0].read_text())
+        # Simulate resuming an older allocation whose metadata/script requested 48h.
+        meta['time'] = '48:00:00'
+        records[0].write_text(json.dumps(meta))
         frozen = run_dir / 'source' / meta['config']
         before = frozen.read_bytes()
         run('--resume-run', str(run_dir))
         assert calls[-1][-1] == '--resume'
+        assert '--time=36:00:00' in calls[-1]
+        assert json.loads(records[0].read_text())['time'] == '36:00:00'
+        assert json.loads(records[0].read_text())['attempts'][-1]['time'] == '36:00:00'
         run('--evaluate-run', str(run_dir))
         assert calls[-1][-1] == '--eval-last'
         assert frozen.read_bytes() == before
@@ -134,7 +140,7 @@ def scheduler():
         except SystemExit as exc:
             assert exc.code == 2
         assert len(calls) == 9
-        assert submit.select_jobs('all') == submit.MATRIX
+        assert submit.select_jobs('all') == submit.CITY_CONTROLS
         run('round3', '--runs-root', str(temp))
         assert len(calls) == 11
         latest = [json.loads(p.read_text()) for p in temp.glob('*/*/run.json') if json.loads(p.read_text())['experiment'] in submit.ROUND3]
@@ -163,20 +169,69 @@ def scheduler():
         assert all(not m.get('assets') for m in matrix)
         for item in matrix:
             assert item['partition'] == 'mcml-hgx-a100-80x4'
-            assert item['gpus'] == 4 and item['time'] == '48:00:00'
+            assert item['gpus'] == 4 and item['time'] == '36:00:00'
         assert set(submit.MATRIX).isdisjoint(submit.ROUND3)
         assert submit.select_jobs('round4') == submit.MATRIX
+        run('citycontrols', '--runs-root', str(temp))
+        assert len(calls) == 18
+        controls = [json.loads(p.read_text()) for p in temp.glob('*/*/run.json')
+                    if json.loads(p.read_text())['experiment'] in submit.CITY_CONTROLS]
+        assert len(controls) == 2 and len({m['work_dir'] for m in controls}) == 2
+        assert all(m['time'] == '36:00:00' for m in controls)
+        assert all('--time=36:00:00' in c for c in calls)
+        assert submit.select_jobs('round5') == submit.CITY_CONTROLS
     bash = Path('C:/Program Files/Git/bin/bash.exe') if sys.platform == 'win32' else Path('/bin/bash')
     for name in ['tools/slurm/run_job.sh'] + [v['script'] for v in submit.CATALOG.values()]:
         text = (ROOT / name).read_text()
         assert '\\\\\n' not in text, 'Double backslash breaks shell continuation'
         subprocess.run([str(bash), '-n'], input=text, text=True, check=True)
         if name.endswith('.slurm'):
-            for directive in ('--ntasks=1', '--gres=gpu:4', '--time=48:00:00', '--partition=mcml-hgx-a100-80x4'):
+            for directive in ('--ntasks=1', '--gres=gpu:4', '--time=36:00:00', '--partition=mcml-hgx-a100-80x4'):
                 assert directive in text
-    print('PASS 7+2+5 isolated jobs, backbone/asset guards, duplicate blocking, frozen resume/eval and Bash syntax')
+    print('PASS 7+2+5+2 isolated jobs, 36h new/resume/eval allocations, guards and Bash syntax')
+
+
+def city_controls():
+    from mmengine.config import Config
+
+    def read(path):
+        return Config.fromfile(str(ROOT / path), import_custom_modules=False).to_dict()
+
+    for size, folder in [('t', 'Tiny'), ('l', 'Large')]:
+        item = submit.CATALOG[f'offseg_{size}_city']
+        cfg = read(item['config'])
+        route = read(f'local_configs/offseg2/{folder}/offsegccmiacs_protoroute_{size}_r4_responsibility_cityscapes_160k-1024x1024.py')
+        original = read(f'local_configs/offseg/{folder}/offseg-{size}_cityscapes_160k-1024x1024.py')
+        # Plain, unmodified OffSeg model; every model key equals the official recipe.
+        assert cfg['model'] == original['model']
+        assert cfg['model']['decode_head']['type'] == 'OffSegHead'
+        for key in ('train_dataloader', 'val_dataloader', 'test_dataloader', 'train_cfg',
+                    'val_cfg', 'test_cfg', 'val_evaluator', 'test_evaluator',
+                    'param_scheduler', 'randomness', 'env_cfg', 'find_unused_parameters'):
+            assert cfg[key] == route[key], (size, key)
+        for key in ('backbone', 'data_preprocessor', 'train_cfg', 'test_cfg'):
+            assert cfg['model'][key] == route['model'][key], (size, key)
+        for key, value in cfg['model']['decode_head'].items():
+            if key != 'type':
+                assert route['model']['decode_head'][key] == value, (size, key)
+        optimizer = copy.deepcopy(route['optim_wrapper'])
+        keys = optimizer['paramwise_cfg']['custom_keys']
+        del keys['acs.mix_logit']
+        del keys['proto_n0_raw']
+        assert cfg['optim_wrapper'] == optimizer
+        hooks = copy.deepcopy(route['default_hooks'])
+        hooks['checkpoint'].setdefault('save_last', True)
+        assert cfg['default_hooks'] == hooks
+        assert cfg['load_from'] is None and cfg['resume'] is False
+        assert cfg['randomness']['seed'] == item['seed'] == 1370346084
+        assert cfg['train_dataloader']['batch_size'] == 2
+        assert cfg['train_cfg']['max_iters'] == 160000
+        assert cfg['train_cfg']['val_interval'] == 8000
+        assert cfg['work_dir'].endswith(Path(item['config']).stem)
+        print(f'PASS OffSeg-{size.upper()} City: original model, Route-matched protocol, 2 rolling+best')
 
 
 if __name__ == '__main__':
     configs()
+    city_controls()
     scheduler()

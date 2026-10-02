@@ -1,15 +1,43 @@
 # LRZ：每个实验独立排队
 
-## 当前批次：2026-09-29 原版 Proto-route 的三数据集 × T/B/L
+## 当前批次：2026-10-02 Cityscapes-T/L 本地 OffSeg 对照
+
+用户指定补两个仍低于PARSeg表格参考的City格：Route-T77.49、Route-L80.94。
+每种尺寸只训练一次原版OffSeg，所有结果均保留，不择低值；此批不重跑Route。
+
+```bash
+cd /dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2
+git pull --ff-only origin main
+python3 tools/slurm/submit.py citycontrols
+squeue --me
+```
+
+`citycontrols/round5/all/new`及默认入口只提交`offseg_t_city`和`offseg_l_city`。
+各自单节点4卡、36小时、动态端口、独立源码快照/日志/权重。仍为2最近普通+1best。
+每项从本尺寸骨干预训练开始：S1/L、19类、1024裁剪、单尺度滑窗、总batch8、
+160k、seed1370346084、每8k验证。模型完整保持原OffSeg，除去Route的附加模块
+及其参数专用优化规则，公共训练/评测协议与对应Route配置一致。
+
+```bash
+python3 tools/slurm/results.py citycontrols
+```
+
+**36小时为新的训练申请规则。** 所有21个目录内训练`.slurm`入口及新提交元数据
+已改36h。当前`submit.py`显式传`sbatch --time=36:00:00`，因此新提交的恢复/评估
+作业即便复用旧48h源码快照也申请36h；保存每次attempt时限，历史attempt不重写。
+已在Slurm排队/运行的作业和服务器旧快照文件不变；短诊断1h/4h不扩大成36h。
+36h是墙钟上限，不改变160k训练预算；超时仍用`--resume-run`继续。
+
+## 历史批次：2026-09-29 原版 Proto-route 的三数据集 × T/B/L
 
 本批只补原版Proto-route尚无结果的五格。不是FeatureContext/CentrePool变体，
 不是多种子，也不重跑已有四格。所有目标数据集独立训练，从对应骨干预训练初始化。
 
 | 数据集 | T / S1 | B / S2 | L |
 |---|---|---|---|
-| ADE20K | **本批 route_t_ade** | 48.49，best=last，已核验 | **本批 route_l_ade** |
-| COCO-Stuff164K | 42.32，best=last，截图 | 44.75，末次权重验证，best未核验 | **本批 route_l_stuff** |
-| Cityscapes | **本批 route_t_city** | 80.69，用户best回报 | **本批 route_l_city** |
+| ADE20K | 44.07，用户best@144k | 48.49，best=last，已核验 | 49.54，用户best@136k |
+| COCO-Stuff164K | 42.32，best=last，截图 | 44.75，末次权重验证，best未核验 | 46.18，用户best@80k |
+| Cityscapes | 77.49，用户best@72k | 80.69，用户best回报 | 80.94，用户best@128k |
 
 ```bash
 cd /dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2
@@ -18,10 +46,10 @@ python3 tools/slurm/submit.py matrix
 squeue --me
 ```
 
-`matrix/round4/all/new`和默认提交入口均为这五项；`round3`/`structures`保留历史两项，
-不要再次提交它们。每项单独sbatch，4卡48小时、动态端口、原子保存run.json、独立
+当时`matrix/round4/all/new`及默认入口为五项；现在仅显式`matrix/round4`保留该组，
+默认已转City对照。不要再次提交已回报实验。当时每项4卡48小时（新提交改36h）、动态端口、原子保存run.json、独立
 源码快照/日志/checkpoints；实际并发数由Slurm配额决定。仍为2最近普通checkpoint+1best。
-不保证L在48小时内结束；到时用`--resume-run`接续，不降低batch或悄悄改训练步数。
+超出作业时限时用`--resume-run`接续，不降低batch或悄悄改训练步数。
 
 预训练文件沿用历史OffSeg路径，必须已有非空文件：
 `pretrained/eformer_v2/eformer_s1_450.pth`、`pretrained/eformer_v2/eformer_l_450.pth`。
@@ -79,7 +107,7 @@ squeue --me
 | featurecontext_b_ade | 对齐后、Offset之前的256→64瓶颈；3×3普通/膨胀卷积混合，经零初始化投影残差回写 | 34048 |
 | centrepool_b_ade | 生成本图类别中心时，先跨类别softmax，再逐类跨像素归一化；原像素偏移路径保持 | 0 |
 
-每项独立sbatch申请4卡/48小时、动态端口、不可变源码快照、独立source/logs/checkpoints。
+当时每项独立sbatch申请4卡/48小时；10-02起新申请为36小时，动态端口和目录隔离不变。
 仍保留2最近普通checkpoint+1best。不需要文本资产，也不依赖成本重测成功。
 只排一项可用准确ID。`round3/all/new/structures`及无参数入口均指向这两项；
 `round2/visual2/text2/round1`保留历史菜单，避免用旧批次名字重跑失败项。
@@ -105,7 +133,7 @@ python3 tools/slurm/submit.py round2
 squeue --me
 ```
 
-`round2` 会发出七次独立sbatch，每项4卡/48小时，动态端口、独立代码快照和目录。
+`round2` 会发出七次独立sbatch，当时每项4卡/48小时（新申请36小时），动态端口、独立代码快照和目录。
 当时`all/new/structures`指向七项；09-25已改为当前Round3。显式`round2`仍只指向历史七项。
 只提交纯视觉五项用 `visual2`，只提交文本两项用 `text2`；与round2择一，不要重复。
 历史五项只通过 `round1` 或准确ID访问；旧任务resume/eval仍使用原run.json和快照。
@@ -161,11 +189,11 @@ python3 tools/slurm/results.py round2
 本轮状态为config-ready，未在本机向LRZ提交或运行GPU。详细公式、验证和来源见
 EXPERIMENTS.md §7.31–7.32；下文为首批交付历史与通用恢复说明。
 
-每个 `.slurm` 文件只运行一个实验：**单节点、4 张 A100、48 小时**，partition
+每个训练 `.slurm` 文件只运行一个实验：**单节点、4 张 A100、36 小时**，partition
 `mcml-hgx-a100-80x4`，qos `mcml`。批量入口逐个调用 `sbatch`，不会在一份
-48 小时申请里串行训练多个模型。实际启动时间/并发数由配额和调度器决定。
+36 小时申请里串行训练多个模型。实际启动时间/并发数由配额和调度器决定。
 
-## 首批历史提交命令（已完成，当前请用上面的matrix）
+## 首批历史提交命令（已完成，当前请用上面的citycontrols）
 
 ```bash
 cd /dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2
@@ -241,7 +269,7 @@ Slurm 启动一个任务，任务内 `torchrun` 启动4个进程，保留调度�
 同实验 ID 有排队/运行作业时拒绝重复提交；运行时另用 `flock` 保护工作目录。
 这不识别没有使用本脚本锁的旧交互训练，旧目录续跑前须确认旧训练已经停止。
 
-## 48小时到期或训练中断
+## 36小时到期或训练中断
 
 完整恢复同一作业，包含模型、原型库、优化器、学习率调度和迭代状态：
 
@@ -249,7 +277,7 @@ Slurm 启动一个任务，任务内 `torchrun` 启动4个进程，保留调度�
 python3 tools/slurm/submit.py --resume-run /完整路径/某次提交/实验ID
 ```
 
-这是新的一份48小时作业，继续使用原快照和 checkpoint 目录，不会从头训练。
+这是新的一份36小时作业，继续使用原快照和 checkpoint 目录，不会从头训练。
 运行前检查 `last_checkpoint` 和训练状态；已达到最大迭代时拒绝再次训练。
 不自动重新排队，避免持续失败的作业反复占用资源。
 
