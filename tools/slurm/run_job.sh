@@ -23,10 +23,19 @@ export OMP_NUM_THREADS=1
 # Do not override Slurm's CUDA_VISIBLE_DEVICES. Remove inherited launcher state.
 unset RANK WORLD_SIZE LOCAL_RANK MASTER_ADDR MASTER_PORT GROUP_RANK ROLE_RANK
 mode=train
+job_seed=
 train_args=()
+cfg_overrides=()
+preflight_args=()
 while (( $# )); do
     case "$1" in
         --eval-last) mode=eval; shift ;;
+        --seed)
+            job_seed=${2:?Missing recorded seed}
+            [[ "$job_seed" =~ ^[0-9]+$ ]] || { echo 'Invalid seed' >&2; exit 2; }
+            preflight_args+=(--seed "$job_seed")
+            cfg_overrides+=("randomness.seed=$job_seed")
+            shift 2 ;;
         *) train_args+=("$1"); shift ;;
     esac
 done
@@ -35,7 +44,7 @@ echo "Job $SLURM_JOB_ID on ${SLURMD_NODENAME:-unknown}; config=$config; mode=$mo
 # resolved recipe, datasets, local backbone weights, CUDA and resume target.
 meta=$(mktemp)
 trap 'rm -f "$meta"' EXIT
-"$python_bin" tools/slurm/preflight.py "$config" --mode "$mode" --output "$meta" "${train_args[@]}"
+"$python_bin" tools/slurm/preflight.py "$config" --mode "$mode" --output "$meta" "${train_args[@]}" "${preflight_args[@]}"
 work_dir=$("$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1]))["work_dir"])' "$meta")
 # An exclusive lock also protects an explicitly selected legacy work directory.
 exec 9>"$work_dir/.slurm-training.lock"
@@ -45,12 +54,15 @@ cp "$meta" "$work_dir/launch-${SLURM_JOB_ID}.json"
 launcher=("$python_bin" -m torch.distributed.run --rdzv-backend=c10d --rdzv-endpoint=localhost:0 "--rdzv-id=offseg-$SLURM_JOB_ID" --nnodes=1 --nproc_per_node=4 --max_restarts=0)
 if [[ "$mode" == eval ]]; then
     checkpoint=$("$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1]))["final_checkpoint"])' "$meta")
-    "${launcher[@]}" tools/test.py "$config" "$checkpoint" --launcher pytorch --work-dir "$work_dir/eval-$SLURM_JOB_ID"
+    eval_args=()
+    if (( ${#cfg_overrides[@]} )); then eval_args+=(--cfg-options "${cfg_overrides[@]}"); fi
+    "${launcher[@]}" tools/test.py "$config" "$checkpoint" --launcher pytorch --work-dir "$work_dir/eval-$SLURM_JOB_ID" "${eval_args[@]}"
 else
     resume_checkpoint=$("$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("resume_checkpoint") or "")' "$meta")
     if [[ -n "$resume_checkpoint" ]]; then
-        train_args+=(--cfg-options "load_from=$resume_checkpoint")
+        cfg_overrides+=("load_from=$resume_checkpoint")
     fi
+    if (( ${#cfg_overrides[@]} )); then train_args+=(--cfg-options "${cfg_overrides[@]}"); fi
     "${launcher[@]}" tools/train.py "$config" --launcher pytorch "${train_args[@]}"
 fi
 echo "Finished job $SLURM_JOB_ID at $(date -Is)"

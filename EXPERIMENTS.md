@@ -2131,6 +2131,50 @@ checkpoint策略一致；模拟两项独立提交、旧48h元数据恢复被36h�
 实际运行seed/SHA、完成状态、best/last、迭代及日志路径待回报。§7.38–7.40结果
 更新随本次代码交付，不单独做结果push。
 
+### 7.42 原版 Route 的七项新 seed / 学习率搜索（2026-10-11，config-ready）
+
+用户明确改变此前不排重复 seed 的偏好：Cityscapes-T/L 各两次原版新训练，另各一项
+调参，再追加 ADE-T 一次原版训练；明确要求七个 seed 互不相同。目标是寻找更高的
+最佳验证读数，保留全部尝试，不把择优值写成跨 seed 均值或稳定性证明。
+
+| 作业 ID | 配置名（位于 Tiny/Large） | 干预 | 历史参照 |
+|---|---|---|---:|
+| route_draw1_t_city | offsegccmiacs_protoroute_draw1_t_r4_responsibility_cityscapes_160k-1024x1024.py | 原 Route，仅新 seed | 77.49 |
+| route_draw1_l_city | offsegccmiacs_protoroute_draw1_l_r4_responsibility_cityscapes_160k-1024x1024.py | 原 Route，仅新 seed | 80.94 |
+| route_draw2_t_city | offsegccmiacs_protoroute_draw2_t_r4_responsibility_cityscapes_160k-1024x1024.py | 原 Route，仅新 seed | 77.49 |
+| route_draw2_l_city | offsegccmiacs_protoroute_draw2_l_r4_responsibility_cityscapes_160k-1024x1024.py | 原 Route，仅新 seed | 80.94 |
+| route_lr4_t_city | offsegccmiacs_protoroute_lr4_t_r4_responsibility_cityscapes_160k-1024x1024.py | 基础 LR 6e-5→4e-5，新 seed | 77.49 |
+| route_lr4_l_city | offsegccmiacs_protoroute_lr4_l_r4_responsibility_cityscapes_160k-1024x1024.py | 基础 LR 6e-5→4e-5，新 seed | 80.94 |
+| route_draw1_t_ade | offsegccmiacs_protoroute_draw1_t_r4_responsibility_ade20k_160k-512x512.py | 原 Route，仅新 seed | 44.07 |
+
+五个原版尝试逐字段等于已有对应 T/L 配置，除 seed 和独立目录。两个 LR4 仅把
+AdamW 基础学习率降为 4e-5，保留所有 10 倍倍率及 weight decay，因此解码头等
+实际学习率同比例下降。使用较小更新幅度是未验证的训练搜索假设，不从 T 的最佳
+迭代 72k 推断已过拟合。此前 n0/EMA 大档变化在 ADE 上均负，故此批不改记忆强度、
+更新率、CCM/IACS、损失或骨干。本批七项 seed 不同，不能仅用分数差隔离 LR 因果。
+
+提交入口 routesearch（round6/all/new/default），历史 citycontrols/round5 仍可访问。
+每项单节点 4 卡 / 36h，City19类/1024crop/总batch8，ADE150类/512/总batch16，
+均160k、每8k验证、单尺度原滑窗、2最近普通+1best、骨干预训练初始化。
+
+新配置显式 seed=None；随机数不在四个训练进程各自导入配置时生成。提交器先一次
+抽取七个正31位 seed，排除已知历史 seed（包括1370346084、2000199364、2026、3407）
+及 runs-root 的已记录 seed，批内去重，写入各 run.json 后才发 sbatch。CLI 传给
+preflight 和 train 的实际 seed 相同，所有 rank 共用该作业 seed；deterministic=False。
+预览 seed 不保留，真实提交重抽并打印。续训/补验证复用记录，不重抽或改源码快照；
+随机作业缺 seed 或通过 legacy work-dir 续训会拒绝，要求 --resume-run 指向原 run.json。
+
+七份独立 .slurm、代码快照、动态 rendezvous 端口及 work/log/checkpoint 路径均隔离。
+结果用 results.py routesearch，输出 best/迭代/文件/seed，历史同ID取最新提交。
+原本已提交的 OffSeg City-T/L 队列不自动取消或变更。
+
+本地真实 MMEngine 解析七配置，严格核对原版等价及 LR4 唯一差异；模拟七项独立
+sbatch、强制历史/批内 seed 碰撞并去重、seed 持久化和续训/补验证保持；执行真实
+run_job.sh 参数组装确认 seed 与 load_from 共用一次 cfg-options，防止 argparse
+覆盖 seed；4-worker/dynamic-port 参数与 Bash 语法通过。历史组提交/资产守卫、City
+原 OffSeg 对照及原五格矩阵配置检查均通过。未启动 GPU 训练或向 LRZ 实际提交。
+实际 seed、提交 SHA、训练完成状态与分数待服务器回报。
+
 ## 8. 尚缺的关键证据
 
 ## 8. 尚缺的关键证据

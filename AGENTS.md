@@ -94,6 +94,14 @@ not a rerun of matrix. All newly submitted training and resumed allocations now 
 old snapshot's SBATCH time on resume without changing frozen training source. Existing
 queued/running jobs are not modified. Short 1h/4h diagnostic jobs remain short.
 
+Owner request updated on 2026-10-11: explicitly authorize seven fresh Proto-route runs
+to seek a higher best score. Two unchanged Cityscapes-T/L pairs, one Cityscapes-T/L
+pair with base LR 4e-5 (original 6e-5), and one unchanged ADE-T. Each of the seven
+must get a different randomly generated seed, recorded before sbatch; preserve it
+on resume. This supersedes the old no-repeat-seed preference for this batch only.
+Current group/default is routesearch (round6/all/new). Keep 4 GPUs/36h per independent
+job, 160k steps and 2 rolling + best. Retain all outcomes and mark LR4 separately.
+
 1. **Never read a mechanism conclusion out of a difference between two losing arms.**
    `pairwhiten 46.95` vs `pairraw 46.19` was written up as "whitening is the right
    object, only the penalty form failed" and used three times to keep the pair line

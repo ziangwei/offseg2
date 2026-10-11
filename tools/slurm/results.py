@@ -22,11 +22,11 @@ def best_score(logs):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('selection', nargs='?', default='citycontrols')
+    parser.add_argument('selection', nargs='?', default='routesearch')
     parser.add_argument('--runs-root', type=Path, default=ROOT / 'work_dirs/slurm_runs')
     args = parser.parse_args()
-    print(f'{"Experiment":<25} {"Best mIoU":>10} {"Iteration":>12} {"Best file":>10}')
-    print('-' * 62)
+    print(f'{"Experiment":<25} {"Best mIoU":>10} {"Iteration":>12} {"Best file":>10} {"Seed":>12}')
+    print('-' * 75)
     for name in select_jobs(args.selection):
         records = sorted(args.runs_root.glob('*/' + name + '/run.json'))
         if not records:
@@ -38,10 +38,10 @@ def main():
         logs = list(work.glob('*/*.log')) + list((record.parent / 'logs').glob('*.log'))
         best = best_score(logs)
         if best is None:
-            print(f'{name:<25} NO BEST RECORD: {work}')
+            print(f'{name:<25} NO BEST RECORD: {work}; seed={meta.get("seed", "unknown")}')
             continue
         exists = (work / f'best_mIoU_iter_{best[1]}.pth').is_file()
-        print(f'{name:<25} {best[0]:>10.2f} {best[1]:>12} {"yes" if exists else "MISSING":>10}')
+        print(f'{name:<25} {best[0]:>10.2f} {best[1]:>12} {"yes" if exists else "MISSING":>10} {str(meta.get("seed", "unknown")):>12}')
 
 
 if __name__ == '__main__':

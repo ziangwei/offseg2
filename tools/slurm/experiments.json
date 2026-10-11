@@ -55,13 +55,17 @@
     "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_textmetric_b_r4_responsibility_ade20k_160k-512x512.py",
     "script": "tools/slurm/textmetric_b_ade.slurm",
     "seed": 1370346084,
-    "assets": ["assets/text_anchors/ade20k_clip_vitb32_desc6.pt"]
+    "assets": [
+      "assets/text_anchors/ade20k_clip_vitb32_desc6.pt"
+    ]
   },
   "textsubspace_b_ade": {
     "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_textsubspace_b_r4_responsibility_ade20k_160k-512x512.py",
     "script": "tools/slurm/textsubspace_b_ade.slurm",
     "seed": 1370346084,
-    "assets": ["assets/text_anchors/ade20k_clip_vitb32_desc6.pt"]
+    "assets": [
+      "assets/text_anchors/ade20k_clip_vitb32_desc6.pt"
+    ]
   },
   "modebank_b_ade": {
     "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_modebank_b_r4_responsibility_ade20k_160k-512x512.py",
@@ -112,5 +116,54 @@
     "config": "local_configs/offseg2/Base/offsegccmiacs_protoroute_recollect_b_r4_responsibility_ade20k_160k-512x512.py",
     "script": "tools/slurm/recollect_b_ade.slurm",
     "seed": 1370346084
+  },
+  "route_draw1_t_city": {
+    "config": "local_configs/offseg2/Tiny/offsegccmiacs_protoroute_draw1_t_r4_responsibility_cityscapes_160k-1024x1024.py",
+    "script": "tools/slurm/route_draw1_t_city.slurm",
+    "seed": null,
+    "seed_policy": "random_unique",
+    "backbone_checkpoint": "pretrained/eformer_v2/eformer_s1_450.pth"
+  },
+  "route_draw1_l_city": {
+    "config": "local_configs/offseg2/Large/offsegccmiacs_protoroute_draw1_l_r4_responsibility_cityscapes_160k-1024x1024.py",
+    "script": "tools/slurm/route_draw1_l_city.slurm",
+    "seed": null,
+    "seed_policy": "random_unique",
+    "backbone_checkpoint": "pretrained/eformer_v2/eformer_l_450.pth"
+  },
+  "route_draw2_t_city": {
+    "config": "local_configs/offseg2/Tiny/offsegccmiacs_protoroute_draw2_t_r4_responsibility_cityscapes_160k-1024x1024.py",
+    "script": "tools/slurm/route_draw2_t_city.slurm",
+    "seed": null,
+    "seed_policy": "random_unique",
+    "backbone_checkpoint": "pretrained/eformer_v2/eformer_s1_450.pth"
+  },
+  "route_draw2_l_city": {
+    "config": "local_configs/offseg2/Large/offsegccmiacs_protoroute_draw2_l_r4_responsibility_cityscapes_160k-1024x1024.py",
+    "script": "tools/slurm/route_draw2_l_city.slurm",
+    "seed": null,
+    "seed_policy": "random_unique",
+    "backbone_checkpoint": "pretrained/eformer_v2/eformer_l_450.pth"
+  },
+  "route_lr4_t_city": {
+    "config": "local_configs/offseg2/Tiny/offsegccmiacs_protoroute_lr4_t_r4_responsibility_cityscapes_160k-1024x1024.py",
+    "script": "tools/slurm/route_lr4_t_city.slurm",
+    "seed": null,
+    "seed_policy": "random_unique",
+    "backbone_checkpoint": "pretrained/eformer_v2/eformer_s1_450.pth"
+  },
+  "route_lr4_l_city": {
+    "config": "local_configs/offseg2/Large/offsegccmiacs_protoroute_lr4_l_r4_responsibility_cityscapes_160k-1024x1024.py",
+    "script": "tools/slurm/route_lr4_l_city.slurm",
+    "seed": null,
+    "seed_policy": "random_unique",
+    "backbone_checkpoint": "pretrained/eformer_v2/eformer_l_450.pth"
+  },
+  "route_draw1_t_ade": {
+    "config": "local_configs/offseg2/Tiny/offsegccmiacs_protoroute_draw1_t_r4_responsibility_ade20k_160k-512x512.py",
+    "script": "tools/slurm/route_draw1_t_ade.slurm",
+    "seed": null,
+    "seed_policy": "random_unique",
+    "backbone_checkpoint": "pretrained/eformer_v2/eformer_s1_450.pth"
   }
 }

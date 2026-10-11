@@ -1,7 +1,16 @@
 # 硕士论文研究路线与项目状态
 
-> 最后更新：2026-10-02
+> 最后更新：2026-10-11
 >
+> **10-11新交付：** 用户明确授权七项新 seed 搜索：原 Route City-T/L 各两次，
+> City-T/L 各一项基础 LR 6e-5→4e-5，再加原 Route ADE-T 一次。七个 seed 必须不同，
+> 提交前随机生成并记录到 run.json，所有 rank 共用，续训/补验证沿用而不重抽。
+> 当前 routesearch（round6/all/new/default），每项独立4卡36h、160k、2+best。
+> 本次授权覆盖这七项，不扩展成未授权的其他复跑。LR4 是未验证训练参数候选，
+> 不同 seed 下不能单独归因学习率，择优仍保留全部尝试和原配置/LR4标签。
+> 尚未运行GPU或向LRZ提交，实际seed/分数待回报，见EXPERIMENTS.md §7.42。
+>
+
 > **10-02新交付：** 用户指定City-T/L原版OffSeg本地对照，匹配各自Route公共协议，
 > 每尺寸一项，保留所有结果。`submit.py citycontrols`独立提交两项，当前config-ready。
 > 所有后续训练/恢复申请改4卡36h（覆盖旧快照48h指令），160k预算和2+best保留；

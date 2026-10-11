@@ -1,6 +1,55 @@
 # LRZ：每个实验独立排队
 
-## 当前批次：2026-10-02 Cityscapes-T/L 本地 OffSeg 对照
+## 当前批次：2026-10-11 Proto-route 七项搜索
+
+用户明确授权七项新训练，并要求七个 seed 互不相同。原版 City-T/L 各两次，
+City-T/L 各一次较低学习率，另加一次原版 ADE-T。每项独立 4 卡 / 36 小时。
+
+```bash
+cd /dss/dssfs05/pn39qo/pn39qo-dss-0001/di97fer/projects_for_test/offseg2
+git pull --ff-only origin main
+python3 tools/slurm/submit.py routesearch
+squeue --me
+```
+
+| 作业 ID | 配置改动 | 历史参照 |
+|---|---|---|
+| route_draw1_t_city | 原版 Route-T，仅新 seed | 77.49 |
+| route_draw1_l_city | 原版 Route-L，仅新 seed | 80.94 |
+| route_draw2_t_city | 原版 Route-T，仅新 seed | 77.49 |
+| route_draw2_l_city | 原版 Route-L，仅新 seed | 80.94 |
+| route_lr4_t_city | Route-T，基础学习率 6e-5 → 4e-5 | 77.49 |
+| route_lr4_l_city | Route-L，基础学习率 6e-5 → 4e-5 | 80.94 |
+| route_draw1_t_ade | 原版 Route-T，仅新 seed | 44.07 |
+
+`routesearch/round6/all/new` 及默认入口提交这七项；`citycontrols/round5` 保留历史
+OffSeg 两项入口，不重复提交已在运行的作业。本轮没有 OffSeg 模型。
+
+每次真实提交前，提交器一次生成七个正 31 位 seed，去重并避开已知历史 seed 和
+此 runs-root 已记录的 seed，写入各 run.json 和 sbatch 命令。四卡共用同一个作业
+seed。配置本身 seed=None；缺少提交器记录的 seed 时 preflight 拒绝启动，避免
+四个进程各自随机生成不同 seed。单项提交也会检查本地已有 run.json，抽新 seed。
+`--dry-run` 的 seed 只是预览，不保留；真实提交会重新抽取并打印。
+
+续训用 `python3 tools/slurm/submit.py --resume-run <原 run 目录>`，保持源码快照、
+seed、checkpoint、优化器与调度器；随机 seed 作业不允许不带 run.json 的 legacy
+续训。新一次训练才抽新 seed，每一步或每次续训不会重抽。
+
+City 为 19 类 / 1024 crop / 160k / 总 batch 8；ADE 为 150 类 / 512 / 160k /
+总 batch 16。每 8k 验证，保留 2 个最近普通权重和独立 best。骨干权重、原 Route
+记忆/CCM/IACS、增强、评估设置都继承对应已有 T/L 配置。LR4 只改基础学习率，
+原 10 倍 head/特殊参数倍率保留，因此它们的实际学习率也同比例下降。
+学习率调整是未验证的候选；不同 seed 下的结果差不能单独归因为学习率。
+
+```bash
+python3 tools/slurm/results.py routesearch
+```
+
+结果包含 best mIoU、对应迭代、best 文件和实际记录的 seed；同 ID 多次提交取最新
+目录。每项的源码、日志和权重均位于自己的 `work_dirs/slurm_runs/<批次>/<作业ID>/`。
+不能把七项中择优结果称为多 seed 平均或稳定性。旧结果保留。
+
+## 历史批次：2026-10-02 Cityscapes-T/L 本地 OffSeg 对照
 
 用户指定补两个仍低于PARSeg表格参考的City格：Route-T77.49、Route-L80.94。
 每种尺寸只训练一次原版OffSeg，所有结果均保留，不择低值；此批不重跑Route。
@@ -12,7 +61,8 @@ python3 tools/slurm/submit.py citycontrols
 squeue --me
 ```
 
-`citycontrols/round5/all/new`及默认入口只提交`offseg_t_city`和`offseg_l_city`。
+当时 `citycontrols/round5/all/new` 及默认入口只提交 `offseg_t_city` 和 `offseg_l_city`。
+现在这两项仅通过显式 `citycontrols/round5` 或准确 ID 访问。
 各自单节点4卡、36小时、动态端口、独立源码快照/日志/权重。仍为2最近普通+1best。
 每项从本尺寸骨干预训练开始：S1/L、19类、1024裁剪、单尺度滑窗、总batch8、
 160k、seed1370346084、每8k验证。模型完整保持原OffSeg，除去Route的附加模块

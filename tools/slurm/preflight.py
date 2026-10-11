@@ -6,18 +6,33 @@ from pathlib import Path
 import sys
 
 
+def configure_seed(cfg, seed=None):
+    if seed is not None:
+        if type(seed) is not int or not 0 < seed < 2**31:
+            raise ValueError('Seed must be a positive 31-bit integer')
+        cfg.merge_from_dict({'randomness.seed': seed})
+    if cfg.get('randomness', {}).get('seed') is None:
+        raise ValueError('This config needs a recorded seed; use submit.py routesearch')
+    return cfg
+
+
+def resolve_config(path, seed=None):
+    from mmengine.config import Config
+    return configure_seed(Config.fromfile(path), seed)
+
+
 def main():
     import torch
     import mmcv.ops  # Check the installed compiled ops before starting 4 workers.
-    from mmengine.config import Config
     p = argparse.ArgumentParser()
     p.add_argument('config')
     p.add_argument('--mode', choices=['train', 'eval'], required=True)
     p.add_argument('--output', required=True)
     p.add_argument('--work-dir')
     p.add_argument('--resume', action='store_true')
+    p.add_argument('--seed', type=int)
     a = p.parse_args()
-    cfg = Config.fromfile(a.config)
+    cfg = resolve_config(a.config, a.seed)
     if not torch.cuda.is_available() or torch.cuda.device_count() != 4:
         raise RuntimeError('Expected exactly 4 Slurm-visible CUDA GPUs')
     work = Path(a.work_dir or cfg.work_dir).resolve()

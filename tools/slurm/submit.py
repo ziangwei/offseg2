@@ -10,6 +10,7 @@ import io
 import json
 import os
 from pathlib import Path
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -21,6 +22,9 @@ CATALOG = json.loads((Path(__file__).with_name('experiments.json')).read_text())
 DEFAULT_CONDA = '/dss/dssmcmlfs01/pn39qo/pn39qo-dss-0000/di97fer/miniconda3'
 JOB_TIME = '36:00:00'
 CITY_CONTROLS = ['offseg_t_city', 'offseg_l_city']
+ROUTE_SEARCH = ['route_draw1_t_city', 'route_draw1_l_city',
+                'route_draw2_t_city', 'route_draw2_l_city',
+                'route_lr4_t_city', 'route_lr4_l_city', 'route_draw1_t_ade']
 VISUAL2 = ['modebank_b_ade', 'centretilt_b_ade', 'blockmetric_b_ade',
            'contrastmetric_b_ade', 'softenergy_b_ade']
 TEXT2 = ['textmetric_b_ade', 'textsubspace_b_ade']
@@ -36,7 +40,9 @@ def command(args, cwd=ROOT):
 
 
 def select_jobs(selection):
-    if selection in ('citycontrols', 'round5', 'all', 'new'):
+    if selection in ('routesearch', 'round6', 'all', 'new'):
+        return list(ROUTE_SEARCH)
+    if selection in ('citycontrols', 'round5'):
         return list(CITY_CONTROLS)
     if selection in ('matrix', 'round4'):
         return list(MATRIX)
@@ -69,11 +75,36 @@ def sbatch_command(meta, mode='train'):
             '--open-mode=append', '--export=ALL',
             str(run / 'source' / meta['script']),
             '--work-dir', meta['work_dir']]
+    if meta.get('seed_policy') == 'random_unique':
+        seed = meta.get('seed')
+        if type(seed) is not int or not 0 < seed < 2**31:
+            raise ValueError('Random-seed run has no recorded seed; cannot start/resume')
+        args.extend(['--seed', str(seed)])
     if mode == 'resume':
         args.append('--resume')
     elif mode == 'eval':
         args.append('--eval-last')
     return args
+
+
+def assign_random_seeds(prepared, runs_root):
+    """Draw once per new run, without replacement; resumed runs never call this."""
+    used = {2026, 3407, 1370346084, 2000199364}
+    used.update(item['seed'] for item in CATALOG.values()
+                if type(item.get('seed')) is int)
+    for record in runs_root.glob('*/*/run.json'):
+        item = json.loads(record.read_text())
+        if type(item.get('seed')) is int:
+            used.add(item['seed'])
+    for meta in prepared:
+        if meta.get('seed_policy') != 'random_unique':
+            continue
+        while True:
+            seed = secrets.randbelow(2**31 - 1) + 1
+            if seed not in used:
+                break
+        used.add(seed)
+        meta['seed'] = seed
 
 
 def snapshot(archive, dest, repo=ROOT):
@@ -119,8 +150,8 @@ def active_names():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('selection', nargs='?', default='citycontrols',
-                        help='citycontrols/round5/all/new (OffSeg City T/L controls); matrix/round4 and round3/round2/round1 are historical; or exact experiment ID')
+    parser.add_argument('selection', nargs='?', default='routesearch',
+                        help='routesearch/round6/all/new (7 Route random-seed trials); citycontrols/round5, matrix/round4 and earlier groups are historical; or exact experiment ID')
     parser.add_argument('--dry-run', action='store_true', help='Print commands without submitting or writing snapshots')
     parser.add_argument('--runs-root', type=Path, default=ROOT / 'work_dirs/slurm_runs')
     modes = parser.add_mutually_exclusive_group()
@@ -145,6 +176,8 @@ def main():
         if args.resume_work_dir and len(jobs) != 1:
             parser.error('Legacy resume requires exactly one experiment')
         if args.resume_work_dir:
+            if any(CATALOG[name].get('seed_policy') == 'random_unique' for name in jobs):
+                parser.error('Random-seed runs must resume with --resume-run to preserve the recorded seed')
             if not (args.resume_work_dir / 'last_checkpoint').is_file():
                 parser.error('Legacy work directory has no last_checkpoint')
             mode = 'resume'
@@ -159,6 +192,7 @@ def main():
                 conda_env=os.environ.get('OFFSEG_CONDA_ENV', 'offseg_new2'),
                 python_override=os.environ.get('OFFSEG_PYTHON', ''),
                 partition='mcml-hgx-a100-80x4', qos='mcml', gpus=4, time=JOB_TIME))
+        assign_random_seeds(prepared, args.runs_root.resolve())
     # The new allocation uses today's 36h policy even when its immutable source
     # snapshot still contains an old 48h SBATCH directive. Old attempts are kept.
     for meta in prepared:
@@ -167,6 +201,8 @@ def main():
         for meta in prepared:
             print(shlex.join(sbatch_command(meta, mode)))
         print('DRY RUN: {} separate jobs, each 4 GPUs / {}.'.format(len(prepared), JOB_TIME))
+        if any(m.get('seed_policy') == 'random_unique' for m in prepared) and not existing:
+            print('Preview seeds are not reserved; actual submission draws and records new unique seeds.')
         return
     # Fail before creating snapshots if Slurm is unavailable. Do not silently
     # submit duplicate active experiment names, including across different SHAs.
@@ -226,7 +262,7 @@ def main():
             raise  # Earlier successful jobs remain queued and recorded.
         meta['attempts'][-1].update(status='submitted', job_id=job_id)
         save(meta)
-        print('{}: job {}\n  run: {}\n  checkpoints: {}'.format(meta['experiment'], job_id, meta['run_dir'], meta['work_dir']), flush=True)
+        print('{}: job {}; seed={}\n  run: {}\n  checkpoints: {}'.format(meta['experiment'], job_id, meta.get('seed'), meta['run_dir'], meta['work_dir']), flush=True)
 
 
 if __name__ == '__main__':

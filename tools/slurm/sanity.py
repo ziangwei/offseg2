@@ -140,7 +140,7 @@ def scheduler():
         except SystemExit as exc:
             assert exc.code == 2
         assert len(calls) == 9
-        assert submit.select_jobs('all') == submit.CITY_CONTROLS
+        assert submit.select_jobs('all') == submit.ROUTE_SEARCH
         run('round3', '--runs-root', str(temp))
         assert len(calls) == 11
         latest = [json.loads(p.read_text()) for p in temp.glob('*/*/run.json') if json.loads(p.read_text())['experiment'] in submit.ROUND3]
