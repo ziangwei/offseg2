@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG = json.loads((Path(__file__).with_name('experiments.json')).read_text())
 DEFAULT_CONDA = '/dss/dssmcmlfs01/pn39qo/pn39qo-dss-0000/di97fer/miniconda3'
 JOB_TIME = '36:00:00'
+ABLATIONS = ['route_nomem_b_ade', 'route_noccm_b_ade', 'route_noresidual_b_ade', 'route_staticacs_b_ade', 'route_spatialstats_b_ade', 'route_fixedmix_b_ade']
 CITY_CONTROLS = ['offseg_t_city', 'offseg_l_city']
 ROUTE_SEARCH = ['route_draw1_t_city', 'route_draw1_l_city',
                 'route_draw2_t_city', 'route_draw2_l_city',
@@ -40,6 +41,8 @@ def command(args, cwd=ROOT):
 
 
 def select_jobs(selection):
+    if selection in ('ablations', 'round7'):
+        return list(ABLATIONS)
     if selection in ('routesearch', 'round6', 'all', 'new'):
         return list(ROUTE_SEARCH)
     if selection in ('citycontrols', 'round5'):
@@ -151,7 +154,7 @@ def active_names():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('selection', nargs='?', default='routesearch',
-                        help='routesearch/round6/all/new (7 Route random-seed trials); citycontrols/round5, matrix/round4 and earlier groups are historical; or exact experiment ID')
+                        help='ablations/round7 (6 ADE-B controlled deletions); routesearch/round6/all/new (7 Route random-seed trials); citycontrols/round5, matrix/round4 and earlier groups are historical; or exact experiment ID')
     parser.add_argument('--dry-run', action='store_true', help='Print commands without submitting or writing snapshots')
     parser.add_argument('--runs-root', type=Path, default=ROOT / 'work_dirs/slurm_runs')
     modes = parser.add_mutually_exclusive_group()

@@ -180,6 +180,16 @@ def scheduler():
         assert all(m['time'] == '36:00:00' for m in controls)
         assert all('--time=36:00:00' in c for c in calls)
         assert submit.select_jobs('round5') == submit.CITY_CONTROLS
+        run('ablations', '--runs-root', str(temp))
+        assert len(calls) == 24
+        ablations = [json.loads(p.read_text()) for p in temp.glob('*/*/run.json')
+                     if json.loads(p.read_text())['experiment'] in submit.ABLATIONS]
+        assert len(ablations) == 6 and len({m['work_dir'] for m in ablations}) == 6
+        assert all(m['seed'] == 1370346084 and m['gpus'] == 4 and
+                   m['time'] == '36:00:00' for m in ablations)
+        assert all(not m.get('assets') and not m.get('seed_policy') for m in ablations)
+        assert all('--seed' not in m['attempts'][0]['command'] for m in ablations)
+        assert submit.select_jobs('round7') == submit.ABLATIONS
     bash = Path('C:/Program Files/Git/bin/bash.exe') if sys.platform == 'win32' else Path('/bin/bash')
     for name in ['tools/slurm/run_job.sh'] + [v['script'] for v in submit.CATALOG.values()]:
         text = (ROOT / name).read_text()
@@ -188,7 +198,7 @@ def scheduler():
         if name.endswith('.slurm'):
             for directive in ('--ntasks=1', '--gres=gpu:4', '--time=36:00:00', '--partition=mcml-hgx-a100-80x4'):
                 assert directive in text
-    print('PASS 7+2+5+2 isolated jobs, 36h new/resume/eval allocations, guards and Bash syntax')
+    print('PASS 7+2+5+2+6 isolated jobs, fixed-seed ablations, 36h new/resume/eval allocations, guards and Bash syntax')
 
 
 def city_controls():

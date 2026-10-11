@@ -1,5 +1,58 @@
 # LRZ：每个实验独立排队
 
+## 2026-10-11：ADE-B 最终 Route 的六项消融
+
+用户要求补齐最终48.49模型的组成证据，明确拒绝再训练OffSeg基线；沿用历史46.01，
+其历史seed未核验。以下六项从原Route从头训练，固定seed1370346084，不使用上批
+搜索的随机seed。S2/150类/512crop/总batch16/160k/每8k验证/4GPU36h/2普通+best。
+
+| ID | 唯一干预 | 问题 |
+|---|---|---|
+| route_nomem_b_ade | 删除跨图原型库，使用本图中心 | 最终模型是否需要跨图信息；补历史47.79 seed缺口 |
+| route_noccm_b_ade | CCM换恒等映射 | 有记忆和IACS后是否仍需要竞争条件特征变换 |
+| route_noresidual_b_ade | 删除全部残差几何评分 | 有记忆和CCM后，残差修正是否仍贡献 |
+| route_staticacs_b_ade | IACS换静态ACS | 图像自适应二阶形状是否比静态四方向能量更好 |
+| route_spatialstats_b_ade | IACS统计改逐类空间softmax | 统计像素时是否需要先考虑跨类竞争 |
+| route_fixedmix_b_ade | 各类记忆混合固定0.5 | 按本图支撑调节混合比例是否优于固定比例 |
+
+无新loss或外部信息；除历史原OffSeg之外，这些臂均保留原始stage1 CE与final CE。
+物理删除相应CCM/残差模块；静态ACS复用初始基/scale，不保留mix或动态统计。
+固定混合删除n0的可训练属性；0.5是预先指定的等权对照，不是验证集调优值。
+固定比例结果只能比较这个比例，不能证明所有固定比例都不行。noCCM同时使CCM
+候选路由失去消费者，不能声称独立隔离了路由。staticACS同时删除统计权重和mix，
+spatialstats才单独隔离统计分配；不是之前47.50的邻域CCM结构。
+
+原Proto48.12与Route48.49已同seed跑满，直接作为不重算/重算CCM候选权重的对照，
+不重复提交。旧static47.71基于48.12，不能替代本次最终Route条件下的消融。
+
+```bash
+python3 tools/slurm/submit.py ablations
+python3 tools/slurm/results.py ablations
+```
+
+`ablations/round7`为显式六项组；默认/all/new/routesearch继续保留上批七项搜索，
+避免旧命令被悄悄改义。单项也可用表内ID。源码、动态端口、日志/权重隔离不变。
+本地CPU真实head数值/梯度/eval、MMEngine配置和Slurm参数检查通过；未运行服务器GPU。
+
+## Slurm 权重清理（保留日志、配置、JSON、源码）
+
+先汇总需要的结果，再预览和删除。默认只清理Slurm训练allocation为COMPLETED的
+独立run/checkpoints目录内iter/best权重，包含best；不扫描source/pretrained或数据链接。
+Slurm不可查询则拒绝删除。队列中的同名/同jobID任务、正在持有训练锁、元数据变化、
+外部legacy工作目录一律保护；未完成/未知状态与CentrePool默认保留。
+
+```bash
+python3 tools/slurm/cleanup_checkpoints.py
+python3 tools/slurm/cleanup_checkpoints.py --delete
+```
+
+失败/超时旧实验若明确放弃，可用`--include-incomplete`先预览，再加`--delete`。
+此选项仍保护活跃/排队任务和CentrePool；`--keep-experiment <ID>`可重复指定保留项。
+每次删除列表记录为run内checkpoint_cleanup_*.json，results.py仍从日志读取分数，
+但Best file将显示MISSING。保留日志不能恢复训练、重新验证或导出模型预测；最终要
+做可视化/成本测量的主模型best应先另行备份或用keep-experiment保留。
+该脚本只提供服务器端命令，本次未清理真实训练文件；本地仅测试了临时夹具。
+
 ## 当前批次：2026-10-11 Proto-route 七项搜索
 
 用户明确授权七项新训练，并要求七个 seed 互不相同。原版 City-T/L 各两次，

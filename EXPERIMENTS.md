@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-09-14
+> 最后更新：2026-10-11
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -2099,6 +2099,11 @@ ADE-T略低，City-T/L差距更值得关注；此比较不能单独定位失败�
 
 ### 7.41 Cityscapes-T/L 本地OffSeg对照与36h排队（2026-10-02，config-ready）
 
+2026-10-11用户补充：两项本地OffSeg对照均已跑完，结果与论文接近；此前没有回报。
+标为owner-reported complete、定性结果，精确best/last/迭代/seed/SHA仍未知，不能
+自动填成论文78.9/81.6。用户说明削弱了“只是公开基线较高”的解释；T/L差距更值得
+视为当前方法/训练迁移的问题，但精确配对差尚不能计算。以下保留10-02交付记录。
+
 用户明确要求复现两个相对PARSeg截图OffSeg参考仍为负的格子：City-T（Route77.49，
 外部参考78.90）与City-L（Route80.94，外部参考81.03）。目的为得到本环境基线，
 不是挑选较低成绩；无论复现高低都记录。本批不是多种子，不再训练Route，B已测
@@ -2174,6 +2179,61 @@ run_job.sh 参数组装确认 seed 与 load_from 共用一次 cfg-options，防�
 覆盖 seed；4-worker/dynamic-port 参数与 Bash 语法通过。历史组提交/资产守卫、City
 原 OffSeg 对照及原五格矩阵配置检查均通过。未启动 GPU 训练或向 LRZ 实际提交。
 实际 seed、提交 SHA、训练完成状态与分数待服务器回报。
+
+### 7.43 ADE-B 最终Route消融与City-T/L分析（2026-10-11，config-ready）
+
+用户要求分析City-T/L未取得提升并补一批ADE20K-B消融，明确拒绝再训练原OffSeg。
+City-T/L本地OffSeg已完成且“跟论文差不多”（定性用户确认，§7.41）；精确读数仍缺。
+不能继续主要归因外部基线偏高，也不能把接近论文直接记成78.9/81.6。
+
+当前最有代码依据的迁移疑点：City1024crop/stride4有65536位置，而ADE512为16384；
+原型门控使用类别softmax后总质量n，而n0仍200、写库阈值仍n>1、warmup仍4000。
+同类概率占比下，crop因素使n增4倍、原型权重减小；n>1也更容易被缺席类满足。
+例如假设某类后验总质量占全部位置1%，初始融合权重由约.55变约.23。此为公式
+示例，不是City实测统计。19类与150类还会改变竞争分布，不能仅由N/K推真实有效支撑。
+小模型估计不准、较大模型已有中心更充分/附加收益小、稀有薄类被总体改善掩盖，均
+为待测解释。City-B79.71→80.69已正，不能泛化成City数据集完全不适用；T峰值72k
+不能单独证明过拟合。现有七项seed/LR搜索会测运行变动，不能给出模块因果解释。
+
+消融目的转为最终48.49的条件贡献；旧47.79组成实验不能全部替代。固定S2/纯视觉/
+150类/512/160k/总batch16/8k验证/seed1370346084/原LR与增强/滑窗。六臂各4GPU36h，
+2普通+best，从骨干预训练从头训练，不加载48.49整模型。这里统一seed用于消融，
+不延伸上批“七个seed互异”的搜索要求。基线沿用46.01并标注历史seed未核验。
+
+| 作业ID | 唯一干预 | 需要回答的问题 |
+|---|---|---|
+| route_nomem_b_ade | 物理删除P、seen、steps与n0，仅使用本图中心 | 最终条件下跨图记忆贡献；补历史47.79实际seed未登记缺口 |
+| route_noccm_b_ade | CCM换无参数恒等映射 | 在记忆+残差几何之上，竞争条件特征变换是否仍有用 |
+| route_noresidual_b_ade | 物理删除所有ACS/IACS参数与修正 | 在记忆+CCM之上，类残差打分是否仍有用 |
+| route_staticacs_b_ade | 动态IACS换静态ACS，复用原初始basis/scale | 本图二阶形状是否优于固定四方向能量 |
+| route_spatialstats_b_ade | 仅iacs_assignment posterior→spatial | 估计二阶形状时是否需要跨类竞争后的像素分配 |
+| route_fixedmix_b_ade | 已观察类别融合固定.5，n0改buffer | 支撑自适应门控是否优于预指定等权混合 |
+
+配置均在Base目录，命名offseg_protoroute_ablate_<arm>_b_ade20k_160k-512x512.py；
+新head OffSegRouteAblations.py，继承原Route前向。全部保留stage1+final两项CE，
+无新loss/外部信息。被删除模块专用优化器键移除。noCCM使候选路由没有消费者，
+不能独立分离route作用；static同时去掉统计、分配与mix，spatialstats用于单独
+分离分配。固定.5只验证这个常数，不代表全部常数；未观察类仍不混入零原型，
+原warmup、写库/all_reduce/EMA率不变。noMemory诊断proto_*为停用零占位。
+
+已有原Proto48.12与Route48.49均实测seed1370346084、跑满160k，可作为不重算/
+重算CCM候选权重的配对，不再提交noRoute。旧static47.71基于48.12，不能代替
+本次Route条件下的static。rank8、detach、n0/EMA已有最终Route实验，不重复。
+新六项只是消融，不是恢复失败臂追求更高分；结果未知，主模型仍为48.49。
+
+入口submit.py ablations（round7），结果results.py ablations；保留上批routesearch
+默认/all/new菜单，旧命令意义不改变。六项源码/端口/日志/权重隔离。CPU真实Offset/
+CCM/ACS/IACS/记忆代码的删除等价、初始共同权重与RNG、两项CE梯度、warmup/激活、
+权重恢复与eval冻结均通过；真实MMEngine逐字段检查六配置只含预定干预；Slurm
+模拟/历史组/36h/4GPU/Bash通过。未本地运行GPU、未向LRZ提交，真实SHA/日志待回报。
+
+用户要求清理Slurm权重，新增cleanup_checkpoints.py：默认预览，--delete才删除
+已完成训练run/checkpoints中的iter/best，包含best，保留日志/JSON/配置/源码。
+队列与sacct核对，Linux共享flock与元数据复查；运行/排队、未完成/未知、CentrePool、
+legacy外部目录默认保护，不递归删目录或跟随source/pretrained链接。可明确放弃
+失败旧臂后--include-incomplete；活跃/CentrePool仍保留。日志不能替代权重做重测/
+可视化/恢复，最终主模型权重需先备份/显式keep。临时夹具删除/保护检查通过，Windows
+测试模拟Linux锁；本次未删实际训练文件，只交付服务器命令。
 
 ## 8. 尚缺的关键证据
 
