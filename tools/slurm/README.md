@@ -1,5 +1,20 @@
 # LRZ：每个实验独立排队
 
+## 批量读数：最高分迭代与最新训练迭代（2026-10-14）
+
+```bash
+for group in routesearch ablations; do
+    python3 tools/slurm/results.py "$group"
+done
+```
+
+`Best iter`是最高mIoU所在迭代，`Last iter`是最新日志里的训练迭代。后者只读取
+Iter(train)，不把Iter(val)的图片计数当进度；按日志时间合并历次续训，即使从较早
+checkpoint恢复，也显示最近续训实际记录的位置，而非旧日志曾达到的最高迭代。
+新建重跑仍取同ID最新run，早期未验证也显示Last iter，最高分/最佳迭代用--占位。
+Last iter=160000表示已记录160k训练步，不证明末次验证成功；值最多滞后一个日志
+间隔。无训练记录显示--。只读日志，不载入权重、不提交GPU、不修改训练快照。
+
 ## 2026-10-11：ADE-B 最终 Route 的六项消融
 
 用户要求补齐最终48.49模型的组成证据，明确拒绝再训练OffSeg基线；沿用历史46.01，
