@@ -487,6 +487,18 @@ FLOPs当完整论文成本，尤其要复核FreqFusion/CARAFE。参数数目包�
 Route头统计前后输出和状态不变、配置解析、模拟sbatch隔离/只读预览/重复拒绝。
 GPU全骨干和实际LRZ调度需服务器执行；本地通过不等于已获得诊断或性能读数。
 
+## 论文材料：只读 ADE-B 导出
+
+`python tools/slurm/submit_thesis_evidence.py` 提交一个4卡/4小时独立作业，
+默认官方OffSeg-B和原Route48.49已有权重，不做训练。先运行
+`python -m tools.thesis_evidence.fetch_baseline` 补下载缺失基线；精确来源与
+实际重评成绩分开记录。两份权重在排队前复制保护到 thesis_evidence，
+不受 slurm_runs 旧清理脚本影响。
+输出两模型预测/配对分析、实际窗口机制、效率、PDF/PNG、完整材料清单和
+给MA写作Claude的实验历史/方法说明。使用前请读
+`tools/thesis_evidence/README.md`，下载 `thesis_evidence.zip` 后校验导入。
+这不是重新申请36小时训练，也不自动增加其他骨干/数据集实验。
+
 ## 官方依据
 
 - [LRZ Slurm batch jobs](https://doku.lrz.de/5-2-slurm-batch-jobs-introduction-1898974516.html)：登录节点 sbatch、计算节点执行、srun 作业步骤。

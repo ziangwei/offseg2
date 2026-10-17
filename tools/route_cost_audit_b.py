@@ -62,6 +62,8 @@ def main():
     parser.add_argument('route_checkpoint')
     parser.add_argument('--offseg-config', default='local_configs/offseg/Base/offseg-b_ade20k_160k-512x512.py')
     parser.add_argument('--offseg-checkpoint')
+    parser.add_argument('--offseg-owner-training-checkpoint', action='store_true',
+                        help='OffSeg is an owner-created full training checkpoint, not a public download')
     parser.add_argument('--work-dir', required=True)
     parser.add_argument('--warmup', type=int, default=30)
     parser.add_argument('--iterations', type=int, default=100)
@@ -84,6 +86,8 @@ def main():
                    '--iterations', str(args.iterations), '--worker-model', worker]
             if args.offseg_checkpoint:
                 cmd += ['--offseg-checkpoint', args.offseg_checkpoint]
+            if args.offseg_owner_training_checkpoint:
+                cmd += ['--offseg-owner-training-checkpoint']
             subprocess.run(cmd, check=True)
             result = json.loads((output / ('cost_' + worker + '.json')).read_text(encoding='utf-8'))
             if report is None:
@@ -104,7 +108,9 @@ def main():
         raise ValueError('Require original Route and original OffSeg')
     if route_cfg.model.backbone.to_dict() != base_cfg.model.backbone.to_dict():
         raise ValueError('Backbones must match')
-    state = normalise_state(torch.load(args.route_checkpoint, map_location='cpu'))
+    # Route is the owner's trained checkpoint (including MMEngine metadata).
+    # Public OffSeg downloads below are read with the restricted tensor loader.
+    state = normalise_state(torch.load(args.route_checkpoint, map_location='cpu', weights_only=False))
     torch.manual_seed(1370346084)
     torch.cuda.set_device(0)
     torch.backends.cudnn.benchmark = False
@@ -136,7 +142,9 @@ def main():
         model = MODELS.build(cfg.model)
         if label == 'OffSeg-B':
             if args.offseg_checkpoint:
-                model.load_state_dict(normalise_state(torch.load(args.offseg_checkpoint, map_location='cpu')), strict=True)
+                model.load_state_dict(normalise_state(torch.load(
+                    args.offseg_checkpoint, map_location='cpu',
+                    weights_only=not args.offseg_owner_training_checkpoint)), strict=True)
                 weight_source = str(Path(args.offseg_checkpoint).resolve())
             else:
                 shared = {k:state[k] for k in model.state_dict() if k in state}

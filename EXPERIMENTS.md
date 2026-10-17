@@ -1,6 +1,6 @@
 # 实验事实账本
 
-> 最后更新：2026-10-11
+> 最后更新：2026-10-17
 >
 > 研究叙事、约束、公式和论文边界见 [THESIS_ROUTE.md](THESIS_ROUTE.md)。
 >
@@ -2136,7 +2136,7 @@ checkpoint策略一致；模拟两项独立提交、旧48h元数据恢复被36h�
 实际运行seed/SHA、完成状态、best/last、迭代及日志路径待回报。§7.38–7.40结果
 更新随本次代码交付，不单独做结果push。
 
-### 7.42 原版 Route 的七项新 seed / 学习率搜索（2026-10-11，config-ready）
+### 7.42 原版 Route 的七项新 seed / 学习率搜索（10-11交付，10-17回报见§7.44）
 
 用户明确改变此前不排重复 seed 的偏好：Cityscapes-T/L 各两次原版新训练，另各一项
 调参，再追加 ADE-T 一次原版训练；明确要求七个 seed 互不相同。目标是寻找更高的
@@ -2180,7 +2180,7 @@ run_job.sh 参数组装确认 seed 与 load_from 共用一次 cfg-options，防�
 原 OffSeg 对照及原五格矩阵配置检查均通过。未启动 GPU 训练或向 LRZ 实际提交。
 实际 seed、提交 SHA、训练完成状态与分数待服务器回报。
 
-### 7.43 ADE-B 最终Route消融与City-T/L分析（2026-10-11，config-ready）
+### 7.43 ADE-B 最终Route消融与City-T/L分析（10-11交付，10-17回报见§7.45）
 
 用户要求分析City-T/L未取得提升并补一批ADE20K-B消融，明确拒绝再训练原OffSeg。
 City-T/L本地OffSeg已完成且“跟论文差不多”（定性用户确认，§7.41）；精确读数仍缺。
@@ -2234,6 +2234,178 @@ legacy外部目录默认保护，不递归删目录或跟随source/pretrained链
 失败旧臂后--include-incomplete；活跃/CentrePool仍保留。日志不能替代权重做重测/
 可视化/恢复，最终主模型权重需先备份/显式keep。临时夹具删除/保护检查通过，Windows
 测试模拟Linux锁；本次未删实际训练文件，只交付服务器命令。
+
+### 7.44 七项搜索回报与更新后的3×3矩阵（2026-10-17，owner-reported best）
+
+来源：用户粘贴results.py完整汇总，明确列Best mIoU / Best iter / Last iter / Best file /
+Seed。以下七项Last iter均160000、best文件均yes。Last iter仅为最新训练日志步数，
+不是last mIoU或Slurm成功退出证明；不由它推定20次验证全部完成。best@160k的四项
+已有终点验证最佳记录，另外三项last验证分数未知。原始日志/权重可加载性/运行SHA/
+完整run.json/作业退出状态未取得，采用owner-reported，不升级为本机审计结果。
+
+| 作业ID | best mIoU | best iter | last train iter | seed | best文件 |
+|---|---:|---:|---:|---:|---|
+| route_draw1_t_city | 79.19 | 160000 | 160000 | 872449244 | yes |
+| route_draw1_l_city | 81.84 | 160000 | 160000 | 454734425 | yes |
+| route_draw2_t_city | 78.73 | 144000 | 160000 | 539601040 | yes |
+| route_draw2_l_city | 81.39 | 88000 | 160000 | 477346602 | yes |
+| route_lr4_t_city | 78.90 | 160000 | 160000 | 1234253866 | yes |
+| route_lr4_l_city | 81.37 | 152000 | 160000 | 473016783 | yes |
+| route_draw1_t_ade | 44.88 | 160000 | 160000 | 371025736 | yes |
+
+完整配置映射（仓库相对路径，实际运行快照待核验）：
+
+- `route_draw1_t_city`：`local_configs/offseg2/Tiny/offsegccmiacs_protoroute_draw1_t_r4_responsibility_cityscapes_160k-1024x1024.py`
+- `route_draw1_l_city`：`local_configs/offseg2/Large/offsegccmiacs_protoroute_draw1_l_r4_responsibility_cityscapes_160k-1024x1024.py`
+- `route_draw2_t_city`：`local_configs/offseg2/Tiny/offsegccmiacs_protoroute_draw2_t_r4_responsibility_cityscapes_160k-1024x1024.py`
+- `route_draw2_l_city`：`local_configs/offseg2/Large/offsegccmiacs_protoroute_draw2_l_r4_responsibility_cityscapes_160k-1024x1024.py`
+- `route_lr4_t_city`：`local_configs/offseg2/Tiny/offsegccmiacs_protoroute_lr4_t_r4_responsibility_cityscapes_160k-1024x1024.py`
+- `route_lr4_l_city`：`local_configs/offseg2/Large/offsegccmiacs_protoroute_lr4_l_r4_responsibility_cityscapes_160k-1024x1024.py`
+- `route_draw1_t_ade`：`local_configs/offseg2/Tiny/offsegccmiacs_protoroute_draw1_t_r4_responsibility_ade20k_160k-512x512.py`
+
+City19类/1024crop/总batch8，ADE150类/512crop/总batch16，160k，8k验证、原单尺度
+滑窗、4GPU/36h独立allocation。五项保持原Route基础LR6e-5，两个lr4为4e-5，其他
+方法设置继承原配置。用户10-14确认ADE-T原尝试不到8k就中断、没有ckpt，随后允许
+不保留原seed从头重开；371025736按本次最新运行记录，不将无分数的早期尝试冒充
+独立完成seed。多次续训属于原run的attempt，不算额外独立seed。实际断点/最终
+checkpoint应从各run.json的work_dir定位，本次未提供绝对批次路径。
+
+原配置新读数：City-T79.19/78.73，跨度0.46；City-L81.84/81.39，跨度0.45。
+相对初次City-T77.49分别+1.70/+1.24，City-L80.94分别+0.90/+0.45；ADE-T44.07→
+44.88为+0.81。这不是新结构增益。初次运行完整性与环境未完全核验，不能把全部
+差异因果归于seed；但现在不能再仅据初次低分断言T/L结构或City迁移必然失败。
+§7.43门控按crop尺度变化的代码事实保留，其为失败原因的解释仍未验证，本轮原
+结构未改门控就达到新分数，先前将它置于主要原因的判断需要降级。
+
+LR4为City-T78.90、City-L81.37，未超过原LR本批最高79.19/81.84；各用不同seed，
+不能据分数差严格证明较低LR有害或无用，当前没有替换原LR6e-5的正证据，不追加调参。
+新原版City-T两次中仅79.19高于论文78.9，另一次78.73低于；City-L仅81.84高于
+论文81.6，另一次81.39低于。不将择优结果写成每次都优于基线或跨seed稳定性。
+
+当前原版Route最高读数矩阵（跨尝试择优，保留所有历史尝试，不含LR4变体）：
+
+| 数据集 | T / S1 | B / S2 | L |
+|---|---:|---:|---:|
+| ADE20K | 44.88（新seed，best@160k） | 48.49（历史审计best=last@160k） | 49.54（历史用户best@136k） |
+| COCO-Stuff164K | 42.32（历史best=last@80k截图） | 44.75（历史末次权重验证，整程best未核验） | 46.18（历史用户best@80k） |
+| Cityscapes | 79.19（本批原版两次最高） | 80.69（历史用户best） | 81.84（本批原版两次最高） |
+
+与OffSeg原论文Table2同尺度报告值比较，差值依次T/B/L为ADE [+0.68/+2.59/+1.04]、
+Stuff [+0.42/+0.45/+0.18]、City [+0.29/+0.19/+0.24]。现在九个已选报告值均高于
+论文参考；这是跨环境、跨尝试择优比较，不是九格配对/显著/稳定增益，且Stuff-B
+仍为末次权重读数。引用源：https://arxiv.org/html/2508.08811v1 Table2（10-17复核）。
+City-T/L本地OffSeg接近论文只有用户定性说明，精确值仍缺，不能用论文值代填。
+历史§7.38/7.39/7.40原始表保留，其“六正三负/七正两负”属于10-02时点，不再
+作为当前矩阵结论。主方法仍为原Route，ADE-B方法开发锚仍48.49，不换成L模型。
+
+### 7.45 最终Route的六项ADE-B消融回报（2026-10-17，owner-reported best）
+
+来源：用户同条消息第二张results.py表。六项Last iter均160000、Best file均yes、
+实际报告seed均1370346084，与历史完整Route48.49的seed相同。作为单seed、跨批次
+对照登记；实际运行SHA/完整配置与环境同一性尚未核验，不宣称严格复现或显著性。
+协议按交付为S2/150类/512/160k/总batch16/8k验证/原LR与增强/单尺度滑窗；模型均
+从骨干预训练起训。代码交付3c57474，后续读数工具交付c4ab629，不代替实际运行SHA。
+
+| 作业ID | 单一干预 | best mIoU | best iter | last train iter | vs完整48.49 |
+|---|---|---:|---:|---:|---:|
+| route_nomem_b_ade | 去跨图记忆 | 47.09 | 144000 | 160000 | -1.40 |
+| route_noccm_b_ade | 去CCM | 47.44 | 144000 | 160000 | -1.05 |
+| route_noresidual_b_ade | 去全部残差修正 | 47.58 | 160000 | 160000 | -0.91 |
+| route_staticacs_b_ade | 动态IACS换静态ACS | 48.25 | 160000 | 160000 | -0.24 |
+| route_spatialstats_b_ade | 竞争责任度换逐类空间权重 | 47.08 | 160000 | 160000 | -1.41 |
+| route_fixedmix_b_ade | 记忆混合比例固定0.5 | 46.85 | 144000 | 160000 | -1.64 |
+
+完整配置映射（相对仓库根）：
+
+- `route_nomem_b_ade`：`local_configs/offseg2/Base/offseg_protoroute_ablate_nomem_b_ade20k_160k-512x512.py`
+- `route_noccm_b_ade`：`local_configs/offseg2/Base/offseg_protoroute_ablate_noccm_b_ade20k_160k-512x512.py`
+- `route_noresidual_b_ade`：`local_configs/offseg2/Base/offseg_protoroute_ablate_noresidual_b_ade20k_160k-512x512.py`
+- `route_staticacs_b_ade`：`local_configs/offseg2/Base/offseg_protoroute_ablate_staticacs_b_ade20k_160k-512x512.py`
+- `route_spatialstats_b_ade`：`local_configs/offseg2/Base/offseg_protoroute_ablate_spatialstats_b_ade20k_160k-512x512.py`
+- `route_fixedmix_b_ade`：`local_configs/offseg2/Base/offseg_protoroute_ablate_fixedmix_b_ade20k_160k-512x512.py`
+
+Best iter=160k的noresidual/staticacs/spatialstats已有终点最佳验证记录；nomem/noccm/
+fixedmix的last验证分数未知。不能把Last iter160k写成它们的last mIoU等于best，也
+不能仅凭此确认Slurm COMPLETED或20/20验证。best文件存在性来自用户汇总，未加载
+确认。路径为各实际批次run.json所指work_dir；当前没有绝对批次名，不补造。
+
+结果支持（在当前单次对照范围内）：
+
+- 去记忆/去CCM/去全部残差均低于完整模型，支持它们在最终组合中的条件贡献；
+  不将各下降相加，不把去CCM读成独立删除候选路由；noCCM不再消费候选权重。
+- 逐类空间softmax代替跨类责任度低1.41，支持最终Route保留竞争后统计分配。
+  该spatialstats与历史47.50的CCM邻域结构无关，不能混称同一个实验。
+- 固定混合0.5低1.64，支持当前支撑自适应门控优于这个预先指定的等权常数；
+  不证明所有固定比例都差，也不能将其与去记忆两臂差值当作机制结论。
+- 静态ACS48.25仅低0.24，动态二阶自适应在当前完整模型上的额外优势较小；
+  不说动态部分已冗余，也不从48.25与其他低分臂之间的排序推因果。可作为效率
+  消融候选，需实测成本后决定是否值得简化，当前不替换48.49主模型。
+- 本次无记忆47.09比历史无记忆47.79低0.70。两次记录分开保留，旧run实际seed/
+  SHA未登记，本次seed已报告；不能覆盖旧47.79、把两者互换拼接一条受控链，或
+  未核验环境就将0.70归为随机波动/代码错误/结构变化。后续优先核对现有元数据，
+  不为此自动重排OffSeg或完整Route；用户明确拒绝重复OffSeg基线。
+
+本轮证据更支持围绕“跨图中心记忆、按图支撑融合、竞争条件判决与统计”组织论证，
+图像自适应二阶几何作为其中有单次增益的组成；不能把EMA、二阶矩、责任度数学
+本身冒充原创。完整Route48.49保留，新六项用于论文消融，不继续调失败删除臂。
+
+下一步优先整理更新主表/最终组合消融表、保存主表九格及重要消融best、核对现有
+日志与run.json、补齐统一参数/FLOPs/时延/显存及预测可视化。既有成本审计不要求
+新160k训练。新的训练/seed/调参均未自动排队，结果记录本地保存，按偏好随下一次
+代码变更一并提交推送，不单独push本次结果。
+
+### 7.46 论文预测/机制图与效率材料设计（2026-10-17，plan-ready）
+
+用户提供与Claude的写作讨论，要求评价并设计下一步；未要求恢复已删除预备知识章，
+当前保留1–5章。详细设计已写入`../thesis/notes/2026-10-17_visual_evidence_plan.md`。
+优先已有日志/预测/机制/效率，不新开160k训练；跨解码器迁移E暂列独立后续研究。
+
+用户怀疑原OffSeg-B46.01权重已删或找不到，服务器可用性尚未核实，不能登记为
+确认删除。官方README明确提供完整训练模型下载入口，Google Drive文件夹可访问
+入口已确认，但内部具体ADE-B文件名/内容/可加载性尚未核验。若使用官方完整ADE-B
+权重，需按本环境同一测试协议重评估并单列来源，不标成原46.01那次本地训练，
+不为缺该权重先重训OffSeg。权重副本保存在Slurm清理范围之外。
+
+Route旧error_audit包含混淆/逐类/逐图/边界JSON与CSV，可复用，不含原始预测PNG和
+两模型纠正图。新增全量推理只留类别PNG和统计，20–30候选图再导出指定类别/窗口
+中间量，避免2000图×150类浮点张量占盘。图像按统一颜色/尺寸比较，包含失败案例。
+
+机制解释不把lambda对自身support的函数曲线当作有效性证明，不混淆crop与整图
+统计；候选数指CCM上下文候选，不是最终输出标签集合；raw Delta不是最终概率
+加性解释。边界带外68.43%错误需结合其83.06%像素占比，增益位置待OffSeg对照。
+现有正文“论文/复现取较低基线”等口径另列为待写作修正项，本次未改Overleaf。
+
+效率复用缓存修复/独立进程脚本，旧FLOPs FAILED不视为已完成；可加入既有静态ACS
+48.25成本作为精度—成本补充，不重新训练。当前为设计，未下载权重/提交GPU作业，
+不承诺Claude所估分钟数或固定增页数。资料随下次代码交付推送。
+
+### 7.47 论文材料端到端采集与写作交接（2026-10-17，code-ready，尚未提交服务器）
+
+用户明确需要“申请服务器GPU→采集全部材料→下载回MA→让不知聊天历史的Claude写论文”，
+不是再给一版设计。新增 `tools/thesis_evidence/` 与
+`tools/slurm/submit_thesis_evidence.py`：一个4卡/4小时只读作业，20张预检、
+两模型ADE2000图原协议验证/类别PNG、全集逐类/混淆/边界内部/改对改错统计、
+固定规则24例（含退步）实际窗口中间量、独立进程成本测量、PDF/PNG和带哈希ZIP。
+GT只用于预测后的统计；第一张实图检查观察前后完整分数逐元素相同，全部缓冲区不变；
+全量Route要求重现48.49±0.02，否则停止解释。机制图不拼成最终分数归因。
+
+新增三份 `docs/thesis_handoff/` 交接：当前方法通俗说明/代码位置、历史数值与种子选择、
+逐项材料用途及不能下的结论。复制完整研究账本、各次run.json、可解析配置、
+带原始日志路径/行号的紧凑训练曲线；不同种子/尝试不拼曲线。MA根目录另有
+`论文实验材料入口.md`；下载后校验导入 `MA/thesis/evidence/`，不自动改Overleaf正文。
+
+已实际列举官方Google目录，ADE-B完整训练权重为 `Base/offseg-b_ade20k.pth`，
+文件ID `1fdSvtdCbuuj_JaO7TTnvXRTp7dwIPHNr`；补充脚本只下载唯一匹配项，保存来源与哈希。
+本地已下载并用weights_only=True安全读取：1163个张量键，类别参考[1,150,256]、
+分割层150类；SHA256为`6addbfe81db91089230341acc3f87b21a63c37796a89eeb76c748a84d26add9d`。
+这修正§7.46“内部文件名未核验”的状态。服务器重评数值尚未知，不登记成原46.01本地训练。
+排队前把两权重复制校验到 `work_dirs/thesis_evidence/protected_weights/`，不在slurm_runs清理范围。
+
+CPU验证：真实Route头在轻量和密集观察下输出/状态逐元素一致；滑窗坐标/标签缩放、
+责任度和空间权重归一化、实际候选数/4×4矩阵、合成改对/改错与混淆分数、
+包含机制图的PDF/PNG渲染、材料清单/哈希/安全解压、模拟一次独立sbatch/权重保护/
+dry-run/重复活动任务拒绝均通过。不等于CUDA/FreqFusion/多进程或全量数据集已验证。
+未运行新训练、未提交真实GPU作业、未生成真实预测图；最终以服务器材料包状态为准。
 
 ## 8. 尚缺的关键证据
 
